@@ -96,7 +96,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         autoExiter = new AutoExiter(log, vaultProbe, msg => sender.SendTo(ReportChannel.Echo, config, msg));
         commandExecutor = new GameCommandExecutor(log, sigScanner);
         addonDumper = new AddonDumper(log);
-        dutyExiter = new DutyExiter(log, addonLifecycle, commandExecutor);
+        dutyExiter = new DutyExiter(log);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
 
@@ -127,7 +127,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         mainWindow.Add("配置", configWindow);
         mainWindow.Add("自动投掷", autoRollWindow);
-        mainWindow.Add("调试", new DebugWindow(addonDumper, commandExecutor));
+        mainWindow.Add("调试", new DebugWindow(addonDumper, commandExecutor, dutyExiter));
         mainWindow.Add("长期统计", historyWindow);
 
         windowSystem.AddWindow(mainWindow);
@@ -284,9 +284,6 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
                 return;
 
             roller.RunOnce(cfg);
-
-            // 退出等待状态推进
-            dutyExiter.Tick();
 
             // 自动退出
             var exitCfg = config.AutoExit;

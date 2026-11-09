@@ -15,15 +15,17 @@ public sealed class DebugWindow
 {
     private readonly AddonDumper dumper;
     private readonly GameCommandExecutor executor;
+    private readonly Maps.DutyExiter dutyExiter;
 
     private string addonName = "ContentsFinder";
     private string dumpResult = string.Empty;
     private string commandInput = string.Empty;
 
-    public DebugWindow(AddonDumper dumper, GameCommandExecutor executor)
+    public DebugWindow(AddonDumper dumper, GameCommandExecutor executor, Maps.DutyExiter dutyExiter)
     {
         this.dumper = dumper;
         this.executor = executor;
+        this.dutyExiter = dutyExiter;
     }
 
     public void Draw()
@@ -48,6 +50,19 @@ public sealed class DebugWindow
         {
             executor.Execute("/dutyfinder");
         }
+
+        ImGui.Separator();
+
+        ImGui.TextDisabled("退本测试（不会影响正常统计）");
+        ImGui.TextDisabled(
+            $"已发送 {dutyExiter.LeaveCount} 次　{(dutyExiter.LastResult.Length > 0 ? dutyExiter.LastResult : "")}");
+
+        if (ImGui.Button("测试退本##leave"))
+            dutyExiter.RequestExit();
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("不活跃退本##leaveinactive"))
+            dutyExiter.RequestExit(inactive: true);
 
         ImGui.Separator();
 
