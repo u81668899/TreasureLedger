@@ -129,9 +129,15 @@ public sealed class AutoRollWindow
         }
 
         // 状态行
-        ImGui.TextDisabled(
-            $"投掷函数：{(roller.Ready ? "已就绪" : "未就绪")}　" +
-            $"已投：{roller.RolledCount} 次");
+        if (roller.Available)
+        {
+            ImGui.TextDisabled($"投掷函数：已就绪 @ 0x{roller.FunctionAddress.ToInt64():X}　已投 {roller.RolledCount} 次");
+        }
+        else
+        {
+            ImGui.TextColored(new Vector4(1f, 0.55f, 0.3f, 1f), "投掷函数：不可用");
+            ImGui.TextWrapped(roller.UnavailableReason);
+        }
 
         if (roller.LastAction.Length > 0)
             ImGui.TextDisabled("最近：" + roller.LastAction);
@@ -176,6 +182,36 @@ public sealed class AutoRollWindow
             cfg.IntervalMs = interval;
             saveConfig();
         }
+
+        DrawSignatureOverride(cfg);
+    }
+
+    /// <summary>自定义特征码输入（游戏更新后自救用）。</summary>
+    private void DrawSignatureOverride(AutoRollConfig cfg)
+    {
+        if (!ImGui.CollapsingHeader("高级：自定义特征码##sig")) return;
+
+        ImGui.TextWrapped(
+            "投掷函数由特征码定位。游戏大版本更新后若内置特征码失效，"
+            + "可在此填入社区提供的新特征码，无需等待插件更新。");
+
+        var sig = cfg.CustomSignature;
+        ImGui.SetNextItemWidth(-120);
+        if (ImGui.InputText("##siginput", ref sig, 256))
+        {
+            cfg.CustomSignature = sig;
+            saveConfig();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("重新检测##sigprobe"))
+        {
+            roller.Probe(cfg.CustomSignature);
+            onDataChanged();
+        }
+
+        if (roller.ActiveSignature.Length > 0)
+            ImGui.TextDisabled("当前生效：" + roller.ActiveSignature);
     }
 
     private void DrawListSettings(AutoRollConfig cfg)

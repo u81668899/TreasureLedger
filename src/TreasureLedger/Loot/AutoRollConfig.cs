@@ -67,6 +67,13 @@ public sealed class AutoRollConfig
     /// <summary>两次投掷之间的最小间隔（毫秒），避免动作过快。</summary>
     public int IntervalMs { get; set; } = 300;
 
+    /// <summary>
+    /// 自定义投掷函数特征码（可选）。
+    /// 游戏大版本更新后，若内置特征码失效，
+    /// 可填入社区提供的新特征码，不必等插件更新。
+    /// </summary>
+    public string CustomSignature { get; set; } = string.Empty;
+
     /// <summary>解析某件物品该用哪个策略。</summary>
     public RollPolicy ResolvePolicy(uint itemId)
     {

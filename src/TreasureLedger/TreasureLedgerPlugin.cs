@@ -110,7 +110,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
             chat, log, config, ledger, sender, ResetLedger, () => recruit.Current, catalog);
 
         roller = new AutoRoller(log, sigScanner);
-        var rollReady = roller.TryInitialize();
+        var rollReady = roller.Probe(config.AutoRoll.CustomSignature);
 
         historyWindow = new HistoryWindow(history, config);
         mainWindow = new MainWindow();
@@ -147,7 +147,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         chat.Print($"[TreasureLedger] 原生命令执行：{(cmdReady ? "已就绪" : "未就绪")}");
 
-        chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪")}　历史目录：{history.Directory_}");
+        chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪：" + roller.UnavailableReason)}");
+        chat.Print($"[TreasureLedger] 历史目录：{history.Directory_}");
         log.Information("[TreasureLedger] 加载完成 v{Ver}，投掷就绪={Ready}", ver?.ToString() ?? "?", rollReady);
     }
 

@@ -147,6 +147,16 @@ delegate bool RollItemRaw(Loot* loot, RollChoice option, uint index);
 
 可投掷判定照抄其过滤条件（非宝箱来源、已投过、状态不可投、模式排除、空槽）。
 
+**为什么这里不能像退本那样用 CS**：已确认 FFXIVClientStructs 的 `Loot` 类
+只有 `Instance` / `ReceiveEvent` / `ReceiveEventWithResult` / `get_Items`，
+没有投掷入口，`ReceiveEvent` 是 Atk UI 事件，语义不对。所以只能沿用特征码方案。
+
+**维护与容错**（向 CS 维护模式靠拢）：
+- 启动时用同一特征码做**预检**，失败则禁用自动投掷，绝不调用空指针
+- 支持**自定义特征码覆盖**：游戏更新后若内置特征码失效，
+  可在插件面板「自动投掷 → 高级：自定义特征码」填入社区新特征码，不必等更新
+- 支持**多候选特征码**，按顺序尝试
+
 ---
 
 ## 风险与注意事项

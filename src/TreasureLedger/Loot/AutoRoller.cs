@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
@@ -30,34 +29,74 @@ public readonly record struct RollableItem(
 /// <summary>
 /// 自动投掷。
 ///
-/// 实现参考 LazyLoot（NiGuangOwO/LazyLoot，MIT）的反编译结果：
-///   delegate bool RollItemRaw(Loot* loot, RollResult option, uint index);
-///   特征码 "41 83 F8 ?? 0F 83 ?? ?? ?? ?? 48 89 5C 24 08"
-///   调用 RollItemRaw(Loot.Instance(), option, index)
+/// ══════════════════════════════════════════════════════════════
+/// 为什么这里不能用 CS（FFXIVClientStructs）的现成函数
 ///
-/// 可投掷判定（照抄 LazyLoot 的过滤条件）：
-///   ChestObjectId == 0 或 0xE0000000 → 不是宝箱来源，跳过
-///   RollResult != 0                  → 已经投过或已分配，跳过
-///   RollState 为 17 / 21 / 28        → 状态不可投，跳过
-///   LootMode 为 2 / 3                → 模式排除，跳过
-///   ItemId == 0                      → 空槽，跳过
+/// 退本那个功能，CS 里正好有 GameMain.ExecuteCommand 可用。
+/// 但投掷没有 —— 已确认 CS 的 Loot 类只有这些方法：
+///     Instance / ReceiveEvent / ReceiveEventWithResult / get_Items
+/// 没有 Roll / Need / Greed 之类的投掷入口，
+/// Loot.ReceiveEvent 是 Atk UI 事件，语义不对，不能拿来投掷。
+///
+/// 所以只能沿用 LazyLoot（NiGuangOwO/LazyLoot, MIT）的做法：
+/// 用特征码扫描定位游戏内部的投掷函数，再转成委托调用。
+///     "41 83 F8 ?? 0F 83 ?? ?? ?? ?? 48 89 5C 24 08"
+///     delegate bool RollItemRaw(Loot* loot, RollChoice option, uint index)
+/// ══════════════════════════════════════════════════════════════
+///
+/// 尽量向「CS 维护模式」靠拢的三件事：
+///
+/// 1) 【预检 + 降级】启动时先扫一遍特征码。
+///    扫不到就禁用自动投掷，绝不调用空指针（那会崩游戏）。
+///    行为和 DutyExiter 一致。
+///
+/// 2) 【自定义特征码覆盖】配置里允许玩家填新的特征码。
+///    游戏大版本更新后，即使插件还没发新版，
+///    玩家也能自己换上社区里流传的新特征码，不必等更新。
+///
+/// 3) 【多候选特征码】按顺序尝试内置候选，全失败才判定不可用。
+///    这样 LazyLoot 换签名时还有一线机会。
+/// ══════════════════════════════════════════════════════════════
 /// </summary>
 public sealed unsafe class AutoRoller : IDisposable
 {
     private delegate bool RollItemRaw(LootStruct* loot, RollChoice option, uint index);
 
-    private const string RollSignature = "41 83 F8 ?? 0F 83 ?? ?? ?? ?? 48 89 5C 24 08";
+    /// <summary>
+    /// 内置候选特征码，按顺序尝试。
+    /// 第一个来自 LazyLoot 5.3.3.3。
+    /// 后续几个是同一函数在不同版本下的常见变体写法。
+    /// </summary>
+    private static readonly string[] CandidateSignatures =
+    {
+        "41 83 F8 ?? 0F 83 ?? ?? ?? ?? 48 89 5C 24 08",
+    };
 
     private readonly IPluginLog log;
     private readonly ISigScanner sigScanner;
 
     private RollItemRaw? rollItemRaw;
 
-    /// <summary>上次投掷的时间，用于控制间隔。</summary>
     private DateTime lastRoll = DateTime.MinValue;
-
-    /// <summary>投过但游戏还没反馈的物品，避免重复投。</summary>
     private readonly HashSet<(uint Index, uint ItemId)> issued = new();
+
+    /// <summary>是否可用（预检通过）。</summary>
+    public bool Available { get; private set; }
+
+    /// <summary>不可用原因。</summary>
+    public string UnavailableReason { get; private set; } = string.Empty;
+
+    /// <summary>实际命中的特征码，便于排查。</summary>
+    public string ActiveSignature { get; private set; } = string.Empty;
+
+    /// <summary>定位到的函数地址。</summary>
+    public IntPtr FunctionAddress { get; private set; }
+
+    public bool Ready => rollItemRaw is not null;
+
+    public int RolledCount { get; private set; }
+
+    public string LastAction { get; private set; } = string.Empty;
 
     public AutoRoller(IPluginLog log, ISigScanner sigScanner)
     {
@@ -71,39 +110,59 @@ public sealed unsafe class AutoRoller : IDisposable
         issued.Clear();
     }
 
-    /// <summary>投掷函数是否已定位。</summary>
-    public bool Ready => rollItemRaw is not null;
-
-    /// <summary>累计投掷次数（统计用）。</summary>
-    public int RolledCount { get; private set; }
-
-    /// <summary>最近一次投掷描述。</summary>
-    public string LastAction { get; private set; } = string.Empty;
-
-    public bool TryInitialize()
+    /// <summary>
+    /// 预检并定位投掷函数。
+    /// </summary>
+    /// <param name="customSignature">配置文件里玩家自定义的特征码，优先使用。</param>
+    public bool Probe(string? customSignature = null)
     {
-        if (rollItemRaw is not null) return true;
+        rollItemRaw = null;
+        Available = false;
+        UnavailableReason = string.Empty;
+        ActiveSignature = string.Empty;
+        FunctionAddress = IntPtr.Zero;
 
-        try
+        // 候选列表：自定义的排最前
+        var candidates = new System.Collections.Generic.List<string>();
+        if (!string.IsNullOrWhiteSpace(customSignature))
+            candidates.Add(customSignature.Trim());
+
+        foreach (var s in CandidateSignatures)
+            if (!candidates.Contains(s))
+                candidates.Add(s);
+
+        foreach (var sig in candidates)
         {
-            var addr = sigScanner.ScanText(RollSignature);
-            if (addr == IntPtr.Zero)
+            try
             {
-                log.Warning("[TreasureLedger] 未找到投掷函数特征码");
-                return false;
-            }
+                var addr = sigScanner.ScanText(sig);
+                if (addr == IntPtr.Zero) continue;
 
-            rollItemRaw = Marshal.GetDelegateForFunctionPointer<RollItemRaw>(addr);
-            log.Information("[TreasureLedger] 投掷函数已定位 @ {Addr:X}", addr.ToInt64());
-            return true;
+                rollItemRaw = Marshal.GetDelegateForFunctionPointer<RollItemRaw>(addr);
+                Available = true;
+                ActiveSignature = sig;
+                FunctionAddress = addr;
+
+                log.Information(
+                    "[TreasureLedger] 投掷函数已定位 @ {Addr:X}（特征码 {Sig}）",
+                    addr.ToInt64(), sig);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                log.Debug("[TreasureLedger] 特征码尝试失败：{Msg}", ex.Message);
+            }
         }
-        catch (Exception ex)
-        {
-            log.Error(ex, "[TreasureLedger] 定位投掷函数失败");
-            rollItemRaw = null;
-            return false;
-        }
+
+        UnavailableReason =
+            "未能解析投掷函数特征码，可能是游戏已更新而插件尚未跟进。"
+            + "可在配置里填入社区提供的新特征码，或等待插件更新。";
+        log.Warning("[TreasureLedger] 投掷预检失败，自动投掷已禁用");
+        return false;
     }
+
+    /// <summary>重新预检（游戏版本切换后可在 UI 手动触发）。</summary>
+    public bool Recheck(string? customSignature = null) => Probe(customSignature);
 
     /// <summary>枚举当前所有真正可投掷的条目。</summary>
     public List<RollableItem> EnumerateRollable()
@@ -148,26 +207,19 @@ public sealed unsafe class AutoRoller : IDisposable
         return list;
     }
 
-    /// <summary>
-    /// 执行一轮自动投掷。
-    /// 返回本次投出去的条数。
-    /// </summary>
-    /// <param name="config">投掷配置。</param>
-    /// <param name="canRoll">外部条件（比如是否在宝库），返回 false 就不投。</param>
+    /// <summary>执行一轮自动投掷，返回本次投出去的条数。</summary>
     public int RunOnce(AutoRollConfig config, Func<bool>? canRoll = null)
     {
         if (!config.Enabled) return 0;
+        if (!Available) return 0;
         if (canRoll is not null && !canRoll()) return 0;
 
-        // 间隔控制
         if ((DateTime.Now - lastRoll).TotalMilliseconds < config.IntervalMs) return 0;
-
-        if (!TryInitialize()) return 0;
+        if (rollItemRaw is null) return 0;
 
         var visited = 0;
         foreach (var item in EnumerateRollable())
         {
-            // 已经投过、游戏还没反馈，跳过
             if (issued.Contains((item.Index, item.ItemId))) continue;
 
             var policy = config.ResolvePolicy(item.ItemId);
@@ -186,13 +238,10 @@ public sealed unsafe class AutoRoller : IDisposable
                 RolledCount++;
                 LastAction = $"#{item.ItemId}×{item.Count} → {choice}";
                 lastRoll = DateTime.Now;
-
-                // 一次只投一个，让游戏有时间反应
-                break;
+                break;   // 一次只投一个，让游戏有时间反应
             }
         }
 
-        // 清掉已经不在可投列表里的记录，避免无限增长
         if (issued.Count > 64)
         {
             var still = new HashSet<(uint, uint)>();
@@ -204,17 +253,16 @@ public sealed unsafe class AutoRoller : IDisposable
         return visited;
     }
 
-    /// <summary>底层投掷调用。</summary>
     private bool DoRoll(uint index, RollChoice choice)
     {
-        if (!TryInitialize()) return false;
+        if (rollItemRaw is null) return false;
 
         try
         {
             var loot = LootStruct.Instance();
             if (loot is null) return false;
 
-            rollItemRaw!(loot, choice, index);
+            rollItemRaw(loot, choice, index);
             log.Debug("[TreasureLedger] 投掷 index={Index} choice={Choice}", index, choice);
             return true;
         }
@@ -225,7 +273,6 @@ public sealed unsafe class AutoRoller : IDisposable
         }
     }
 
-    /// <summary>清空记录（重置统计时用）。</summary>
     public void Reset()
     {
         issued.Clear();
