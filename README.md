@@ -170,10 +170,17 @@ delegate bool RollItemRaw(Loot* loot, RollChoice option, uint index);
 
 ## 待办
 
+### 功能
+
 - 小怪记录（金币怪 / 顺序怪 / 战斗怪，出现→死亡=成功、逃走=失败）
 - 本地标记（神殿本地标点、寻宝标记、洋葱标记）
 - 传送提醒 / 多玛自动传送 / 青魔进本自爆
-- 下底自动退出（打完全程 + 开完宝箱 + 投掷结束）
+
+### 待实测校准
+
+- 下底 boss 与神殿召唤的实际 LogMessageId（当前用文本匹配兜底）
+- 层数推进在真实宝库中的准确性
+- 招募内容的 `AgentLookingForGroup.LastComment` 兜底路径
 
 ---
 
