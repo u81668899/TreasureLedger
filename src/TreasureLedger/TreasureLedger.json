@@ -1,10 +1,10 @@
 {
   "Author": "u81668899",
-  "Name": "挖宝会计卫月版",
-  "Punchline": "宝物库挖宝的账本，掉落统计与自动投掷",
-  "Description": "按宝图分类统计掉落，小怪/宝箱/投掷三源分离去重。支持层数、底数、洞数、地图数与神殿分级记录，可自定义查询与重置指令，支持默语/小队/本服贝/跨服贝/悄悄话多频道播报。内置长期分卷存储与统计表格，并提供黑白名单式自动投掷。纯 DeepSeek 制作。",
+  "Name": "TreasureLedger",
+  "Punchline": "挖宝会计·卫月版",
+  "Description": "挖宝会计·卫月版。纯 DeepSeek 制作。宝物库挖宝的账户与统计：按宝图分类记录掉落，小怪/宝箱/投掷三源分离去重，统计层数、底数、洞数、地图数与神殿分级，支持自定义查询与重置指令、多频道播报、长期分卷存储与统计表格，并提供黑白名单式自动投掷。",
   "InternalName": "TreasureLedger",
-  "AssemblyVersion": "0.1.0.51",
+  "AssemblyVersion": "0.1.0.52",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/u81668899/TreasureLedger",
   "Tags": [
