@@ -54,7 +54,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
-        sender = new ChatSender(log);
+        sender = new ChatSender(chat, log);
 
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
 

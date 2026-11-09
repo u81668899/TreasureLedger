@@ -1,113 +1,78 @@
 using System;
 using Dalamud.Game.Text;
 using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.System.String;
-using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 
 namespace TreasureLedger.Chat;
 
 /// <summary>
-/// 频道发送器。
+/// 聊天发送器 —— 安全模式（只用 Dalamud 官方封装，永不碰原生指针）。
 ///
-/// 实测结论：
-/// - CommandManager.ProcessCommand("/e xxx") 返回 false，发不出去
-/// - RaptureLogModule.PrintString 可用，但走系统频道
-/// - 要指定频道必须走 PrintMessage(LogInfo, Utf8String* sender, Utf8String* message, ...)
+/// ══════════════════════════════════════════════════════════════
+/// ⚠️ 崩溃事故记录（2026-11-09 22:55，不可重犯）
+///
+/// 曾经这样写过：
+///     var module = RaptureLogModule.Instance();
+///     var info = new LogInfo { Value = (ushort)kind };
+///     module->PrintMessage(info, null, msg, Environment.TickCount, false);
+///
+/// 结果：游戏立即崩溃，异常代码 0xC0000005（访问冲突）。
+/// 崩溃堆栈：
+///     ffxiv_dx11.exe+88ECB
+///     ILStubClass.IL_STUB_PInvoke(RaptureLogModule*, LogInfo, Utf8String*, ...)
+///     Dalamud.Game.Gui.ChatGui.HandlePrintMessageDetour(...)
+///
+/// 根因：PrintMessage 的第二个参数 senderName 是 Utf8String*，
+///       游戏内部会解引用它取发送者名字。传 null = 解引用空指针 = 秒崩。
+///
+/// 教训：
+///   1. 原生指针参数传 null 之前，必须确认游戏内部会不会解引用。
+///   2. 结构体（LogInfo）和字符串（Utf8String）的生命周期、所有权要先搞清楚。
+///   3. 未经验证的原生调用绝不能直接部署到用户正在玩的游戏里。
+///   4. 要真实发频道消息，应该复用 Dalamud 已有的安全封装，
+///      而不是自己拼 LogInfo + PrintMessage。
+/// ══════════════════════════════════════════════════════════════
 /// </summary>
-public sealed unsafe class ChatSender : IDisposable
+public sealed class ChatSender : IDisposable
 {
+    private readonly IChatGui chat;
     private readonly IPluginLog log;
 
-    public ChatSender(IPluginLog log)
+    public ChatSender(IChatGui chat, IPluginLog log)
     {
+        this.chat = chat;
         this.log = log;
     }
 
     public void Dispose() { }
 
-    /// <summary>往指定聊天类型发一条文本。</summary>
-    public bool Send(XivChatType kind, string text)
-    {
-        if (string.IsNullOrEmpty(text)) return false;
-
-        var module = RaptureLogModule.Instance();
-        if (module is null)
-        {
-            log.Warning("[TreasureLedger] RaptureLogModule 为空");
-            return false;
-        }
-
-        Utf8String* msg = null;
-        try
-        {
-            msg = Utf8String.FromString(text);
-            if (msg is null) return false;
-
-            var info = new LogInfo { Value = (ushort)kind };
-
-            module->PrintMessage(info, null, msg, Environment.TickCount, false);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            log.Error(ex, "[TreasureLedger] PrintMessage 失败（{Kind}）", kind);
-            return false;
-        }
-        finally
-        {
-            if (msg is not null) msg->Dtor();
-        }
-    }
-
-    /// <summary>兜底：本地输出。</summary>
+    /// <summary>本地输出（安全）。</summary>
     public void PrintLocal(string text)
     {
+        if (string.IsNullOrEmpty(text)) return;
         try
         {
-            var module = RaptureLogModule.Instance();
-            module->PrintString(text);
+            chat.Print(text);
         }
         catch (Exception ex)
         {
-            log.Error(ex, "[TreasureLedger] PrintString 失败");
+            log.Error(ex, "[TreasureLedger] Print 失败");
         }
     }
 
+    /// <summary>
+    /// 输出到指定频道。
+    /// 当前实现只做本地输出并加频道前缀标记 —— 真正的频道发送待验证方案。
+    /// </summary>
     public bool SendTo(ReportChannel channel, Configuration config, string text)
     {
-        var kind = channel switch
-        {
-            ReportChannel.Echo => XivChatType.Echo,
-            ReportChannel.Party => XivChatType.Party,
-            ReportChannel.LinkshellLocal => LocalLsType(config.LocalLinkshellIndex),
-            ReportChannel.CrossWorldLinkshell => CrossLsType(config.CrossLinkshellIndex),
-            _ => XivChatType.Echo,
-        };
-
-        return Send(kind, text);
+        var tag = Configuration.ChannelName(channel);
+        PrintLocal($"[{tag}] {text}");
+        return true;
     }
 
-    private static XivChatType LocalLsType(int index) => index switch
+    public bool Send(XivChatType kind, string text)
     {
-        1 => XivChatType.Ls1,
-        2 => XivChatType.Ls2,
-        3 => XivChatType.Ls3,
-        4 => XivChatType.Ls4,
-        5 => XivChatType.Ls5,
-        6 => XivChatType.Ls6,
-        7 => XivChatType.Ls7,
-        _ => XivChatType.Ls8,
-    };
-
-    private static XivChatType CrossLsType(int index) => index switch
-    {
-        1 => XivChatType.CrossLinkShell1,
-        2 => XivChatType.CrossLinkShell2,
-        3 => XivChatType.CrossLinkShell3,
-        4 => XivChatType.CrossLinkShell4,
-        5 => XivChatType.CrossLinkShell5,
-        6 => XivChatType.CrossLinkShell6,
-        7 => XivChatType.CrossLinkShell7,
-        _ => XivChatType.CrossLinkShell8,
-    };
+        PrintLocal(text);
+        return true;
+    }
 }
