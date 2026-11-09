@@ -25,3 +25,8 @@ __pycache__/
 venv/
 dist/
 build/
+
+# .NET build output
+bin/
+obj/
+*.user

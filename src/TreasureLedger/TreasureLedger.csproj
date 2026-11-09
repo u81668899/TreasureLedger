@@ -1,0 +1,16 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Platforms>x64</Platforms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>TreasureLedger</AssemblyName>
+    <RootNamespace>TreasureLedger</RootNamespace>
+    <Version>0.1.0.0</Version>
+    <Authors>u81668899</Authors>
+    <Description>挖宝会计：记录宝库掉落、分类统计、频道播报</Description>
+    <PackageProjectUrl>https://github.com/u81668899/TreasureLedger</PackageProjectUrl>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+</Project>
