@@ -12,23 +12,43 @@ namespace TreasureLedger.Report;
 /// </summary>
 public static class ReportFormatter
 {
-    /// <summary>内置 + 用户自定义，合并后的完整清单。</summary>
-    public static List<TrackedItem> EffectiveItems(Configuration config)
+    /// <summary>内置 + 用户自定义，合并后的完整清单。应用了显示名覆盖。</summary>
+    /// <param name="catalog">用于把自定义物品的 ID 换成游戏原名，可为 null。</param>
+    public static List<TrackedItem> EffectiveItems(Configuration config, ItemCatalog? catalog = null)
     {
-        var list = new List<TrackedItem>(TrackedItems.Builtin);
+        var list = new List<TrackedItem>(TrackedItems.Builtin.Count);
+
+        foreach (var b in TrackedItems.Builtin)
+        {
+            // 有覆盖就用覆盖名
+            if (config.BuiltinDisplayOverrides.TryGetValue(b.ItemId, out var custom)
+                && !string.IsNullOrWhiteSpace(custom))
+            {
+                list.Add(b with { Display = custom });
+            }
+            else
+            {
+                list.Add(b);
+            }
+        }
+
         foreach (var c in config.CustomItems)
         {
             if (c.ItemId == 0) continue;
             if (TrackedItems.FindBuiltin(c.ItemId) is not null) continue;
             if (list.Any(x => x.ItemId == c.ItemId)) continue;
 
+            var gameName = catalog?.GetName(c.ItemId) ?? string.Empty;
+            if (gameName.Length == 0) gameName = $"#{c.ItemId}";
+
             list.Add(new TrackedItem(
                 c.ItemId,
-                c.Display.Length > 0 ? c.Display : $"#{c.ItemId}",
-                c.Display.Length > 0 ? c.Display : $"#{c.ItemId}",
+                gameName,
+                c.Display,
                 c.Tier,
                 UserAdded: true));
         }
+
         return list;
     }
 
@@ -67,10 +87,10 @@ public static class ReportFormatter
     }
 
     /// <summary>按分类拼「本次掉落内容」，每个分类一行。</summary>
-    public static List<string> BuildLootLines(SessionLedger ledger, Configuration config)
+    public static List<string> BuildLootLines(SessionLedger ledger, Configuration config, ItemCatalog? catalog = null)
     {
         var lines = new List<string>();
-        var items = EffectiveItems(config);
+        var items = EffectiveItems(config, catalog);
 
         foreach (var tier in Enum.GetValues<MapTier>())
         {
@@ -95,7 +115,7 @@ public static class ReportFormatter
     }
 
     /// <summary>发送用完整内容。</summary>
-    public static List<string> BuildFullReport(SessionLedger ledger, Configuration config, string recruitText = "")
+    public static List<string> BuildFullReport(SessionLedger ledger, Configuration config, string recruitText = "", ItemCatalog? catalog = null)
     {
         var lines = new List<string> { BuildSummaryLine(ledger) };
 
@@ -111,14 +131,14 @@ public static class ReportFormatter
         if (!string.IsNullOrWhiteSpace(recruitText))
             lines.Add("招募：《" + recruitText.Trim() + "》");
 
-        lines.AddRange(BuildLootLines(ledger, config));
+        lines.AddRange(BuildLootLines(ledger, config, catalog));
         return lines;
     }
 
     /// <summary>按来源拆分（UI 用）。</summary>
-    public static IEnumerable<string> BuildSourceBreakdown(SessionLedger ledger, Configuration config)
+    public static IEnumerable<string> BuildSourceBreakdown(SessionLedger ledger, Configuration config, ItemCatalog? catalog = null)
     {
-        foreach (var it in EffectiveItems(config))
+        foreach (var it in EffectiveItems(config, catalog))
         {
             var total = ledger.GetCount(it.ItemId);
             if (total <= 0) continue;

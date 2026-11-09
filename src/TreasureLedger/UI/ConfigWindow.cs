@@ -200,7 +200,7 @@ public sealed class ConfigWindow
 
     private void DrawItems()
     {
-        ImGui.TextDisabled("取消勾选 = 不统计。按宝图分类分组。");
+        ImGui.TextDisabled("取消勾选 = 不统计。按宝图分类分组。第二列可改统计显示名。");
         ImGui.Spacing();
 
         if (ImGui.Button("全选"))
@@ -218,7 +218,7 @@ public sealed class ConfigWindow
 
         ImGui.Separator();
 
-        if (!ImGui.BeginChild("tl-items", new Vector2(0, -110), true)) return;
+        if (!ImGui.BeginChild("tl-items", new Vector2(0, -150), true)) return;
 
         // 内置物品，按分类
         foreach (var (tier, items) in TrackedItems.ByTier())
@@ -226,15 +226,7 @@ public sealed class ConfigWindow
             if (!ImGui.CollapsingHeader($"{Configuration.TierName(tier)}  ({items.Count})##tier{(int)tier}"))
                 continue;
 
-            foreach (var it in items)
-            {
-                var enabled = config.IsItemEnabled(it.ItemId);
-                if (ImGui.Checkbox($"{it.ReportName}##i{it.ItemId}", ref enabled))
-                {
-                    config.ToggleItem(it.ItemId);
-                    saveConfig();
-                }
-            }
+            DrawItemTable($"tier{(int)tier}", items, allowDelete: false);
         }
 
         // 用户自定义
@@ -242,22 +234,16 @@ public sealed class ConfigWindow
         {
             if (ImGui.CollapsingHeader($"自己添加 ({config.CustomItems.Count})##custom"))
             {
-                foreach (var c in config.CustomItems.ToList())
-                {
-                    var enabled = config.IsItemEnabled(c.ItemId);
-                    if (ImGui.Checkbox($"[{Configuration.TierName(c.Tier)}] {c.Display}　#{c.ItemId}##c{c.ItemId}", ref enabled))
-                    {
-                        config.ToggleItem(c.ItemId);
-                        saveConfig();
-                    }
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton($"删除##d{c.ItemId}"))
-                    {
-                        config.CustomItems.Remove(c);
-                        config.DisabledItemIds.Remove(c.ItemId);
-                        saveConfig();
-                    }
-                }
+                var customs = config.CustomItems
+                    .Select(c => new TrackedItem(
+                        c.ItemId,
+                        catalog.GetName(c.ItemId) is { Length: > 0 } n ? n : $"#{c.ItemId}",
+                        c.Display,
+                        c.Tier,
+                        UserAdded: true))
+                    .ToList();
+
+                DrawItemTable("custom", customs, allowDelete: true);
             }
         }
 
@@ -306,6 +292,121 @@ public sealed class ConfigWindow
             newItemName = string.Empty;
             resolvedItemId = 0;
             resolvedItemName = string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// 绘制物品表格：勾选 / 自定义名 / 游戏原名 / ID / 删除。
+    /// </summary>
+    private void DrawItemTable(string tableId, List<TrackedItem> items, bool allowDelete)
+    {
+        var cols = allowDelete ? 5 : 4;
+        var flags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg
+                    | ImGuiTableFlags.SizingStretchProp;
+
+        if (!ImGui.BeginTable($"tl-itemtbl-{tableId}", cols, flags)) return;
+
+        ImGui.TableSetupColumn("统计", ImGuiTableColumnFlags.WidthFixed, 40);
+        ImGui.TableSetupColumn("自定义名", ImGuiTableColumnFlags.WidthStretch, 1.2f);
+        ImGui.TableSetupColumn("游戏原名", ImGuiTableColumnFlags.WidthStretch, 1.5f);
+        ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed, 70);
+        if (allowDelete) ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 50);
+
+        ImGui.TableHeadersRow();
+
+        foreach (var it in items)
+        {
+            ImGui.TableNextRow();
+
+            // 1) 勾选
+            ImGui.TableNextColumn();
+            var enabled = config.IsItemEnabled(it.ItemId);
+            // checkbox 标签留空避免撑宽，用 ID 作隐藏后缀保证唯一
+            if (ImGui.Checkbox($"##chk{tableId}{it.ItemId}", ref enabled))
+            {
+                config.ToggleItem(it.ItemId);
+                saveConfig();
+            }
+
+            // 2) 自定义名（可编辑）
+            ImGui.TableNextColumn();
+            var display = GetDisplay(it.ItemId, it.UserAdded);
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.InputText($"##disp{tableId}{it.ItemId}", ref display, 64))
+            {
+                SetDisplay(it.ItemId, display, it.UserAdded);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("留空则播报时用游戏原名");
+
+            // 3) 游戏原名
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(it.FullName);
+
+            // 4) ID
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled(it.ItemId.ToString());
+
+            // 5) 删除（仅自己添加的）
+            if (allowDelete)
+            {
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton($"删除##del{tableId}{it.ItemId}"))
+                {
+                    config.CustomItems.RemoveAll(x => x.ItemId == it.ItemId);
+                    config.DisabledItemIds.Remove(it.ItemId);
+                    saveConfig();
+                    onDataChanged();
+                    ImGui.EndTable();
+                    return;
+                }
+            }
+        }
+
+        ImGui.EndTable();
+    }
+
+    /// <summary>取某物品当前的自定义显示名。</summary>
+    private string GetDisplay(uint itemId, bool userAdded)
+    {
+        if (userAdded)
+        {
+            var c = config.CustomItems.FirstOrDefault(x => x.ItemId == itemId);
+            return c?.Display ?? string.Empty;
+        }
+
+        var builtin = TrackedItems.FindBuiltin(itemId);
+        return builtin?.Display ?? string.Empty;
+    }
+
+    /// <summary>设置自定义显示名。空的就当作「用游戏原名」。</summary>
+    private void SetDisplay(uint itemId, string display, bool userAdded)
+    {
+        var t = (display ?? string.Empty).Trim();
+
+        if (userAdded)
+        {
+            var c = config.CustomItems.FirstOrDefault(x => x.ItemId == itemId);
+            if (c is null) return;
+            c.Display = t;
+            saveConfig();
+            return;
+        }
+
+        // 内置物品：把自定义名存进 CustomDisplay 覆盖表
+        config.BuiltinDisplayOverrides.TryGetValue(itemId, out var old);
+        if (t.Length == 0)
+        {
+            if (config.BuiltinDisplayOverrides.ContainsKey(itemId))
+            {
+                config.BuiltinDisplayOverrides.Remove(itemId);
+                saveConfig();
+            }
+        }
+        else if (old != t)
+        {
+            config.BuiltinDisplayOverrides[itemId] = t;
+            saveConfig();
         }
     }
 
@@ -372,7 +473,7 @@ public sealed class ConfigWindow
         if (!ImGui.BeginChild("tl-stats", new Vector2(0, 0), true)) return;
 
         var any = false;
-        foreach (var line in ReportFormatter.BuildSourceBreakdown(ledger, config))
+        foreach (var line in ReportFormatter.BuildSourceBreakdown(ledger, config, catalog))
         {
             ImGui.Text(line);
             any = true;

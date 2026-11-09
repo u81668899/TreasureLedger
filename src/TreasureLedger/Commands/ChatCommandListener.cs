@@ -3,6 +3,7 @@ using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
 using Dalamud.Plugin.Services;
 using TreasureLedger.Chat;
+using TreasureLedger.Items;
 using TreasureLedger.Ledger;
 using TreasureLedger.Report;
 
@@ -21,6 +22,7 @@ public sealed class ChatCommandListener : IDisposable
     private readonly ChatSender sender;
     private readonly Action resetLedger;
     private readonly Func<string> recruitProvider;
+    private readonly ItemCatalog? catalog;
 
     public ChatCommandListener(
         IChatGui chat,
@@ -29,7 +31,8 @@ public sealed class ChatCommandListener : IDisposable
         SessionLedger ledger,
         ChatSender sender,
         Action resetLedger,
-        Func<string> recruitProvider)
+        Func<string> recruitProvider,
+        ItemCatalog? catalog = null)
     {
         this.chat = chat;
         this.log = log;
@@ -38,6 +41,7 @@ public sealed class ChatCommandListener : IDisposable
         this.sender = sender;
         this.resetLedger = resetLedger;
         this.recruitProvider = recruitProvider;
+        this.catalog = catalog;
 
         chat.ChatMessage += OnChatMessage;
     }
@@ -100,7 +104,7 @@ public sealed class ChatCommandListener : IDisposable
 
     public void SendReport(ReportChannel channel)
     {
-        foreach (var line in ReportFormatter.BuildFullReport(ledger, config, recruitProvider()))
+        foreach (var line in ReportFormatter.BuildFullReport(ledger, config, recruitProvider(), catalog))
             sender.SendTo(channel, config, line);
     }
 

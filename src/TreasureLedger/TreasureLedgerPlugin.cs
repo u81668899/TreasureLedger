@@ -85,7 +85,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         capture.LogSeen += OnLogSeen;
 
         chatCommands = new ChatCommandListener(
-            chat, log, config, ledger, sender, ResetLedger, () => recruit.Current);
+            chat, log, config, ledger, sender, ResetLedger, () => recruit.Current, catalog);
 
         roller = new AutoRoller(log, sigScanner);
         var rollReady = roller.TryInitialize();

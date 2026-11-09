@@ -55,6 +55,12 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>用户自行添加的物品（版本更新后自己补，不用等插件更新）。</summary>
     public List<CustomItem> CustomItems { get; set; } = new();
 
+    /// <summary>
+    /// 内置物品的显示名覆盖：ItemId → 自定义名。
+    /// 只影响播报显示，不改内置清单本身。
+    /// </summary>
+    public Dictionary<uint, string> BuiltinDisplayOverrides { get; set; } = new();
+
     // ── 行为 ──────────────────────────────────────────
     public bool ResetOnPartyJoin { get; set; } = true;
     public bool PrintLootLocally { get; set; } = false;
