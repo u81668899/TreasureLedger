@@ -50,6 +50,67 @@ public sealed class AutoRollWindow
         ImGui.Separator();
 
         DrawItemList(cfg);
+        ImGui.Separator();
+
+        DrawAutoExit();
+    }
+
+    /// <summary>自动退出设置。</summary>
+    private void DrawAutoExit()
+    {
+        var ecfg = config.AutoExit;
+
+        ImGui.TextDisabled("下底自动退出");
+
+        var enabled = ecfg.Enabled;
+        if (ImGui.Checkbox("启用自动退出##exit", ref enabled))
+        {
+            ecfg.Enabled = enabled;
+            saveConfig();
+        }
+
+        if (!ecfg.Enabled)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("（未启用时不会退本）");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        var requireBottom = ecfg.RequireBottom;
+        if (ImGui.Checkbox("必须下底过才退出##eb", ref requireBottom))
+        {
+            ecfg.RequireBottom = requireBottom;
+            saveConfig();
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled("（防止普通进洞误触发）");
+
+        var requireRolls = ecfg.RequireRollsFinished;
+        if (ImGui.Checkbox("必须投掷全部结束才退出##er", ref requireRolls))
+        {
+            ecfg.RequireRollsFinished = requireRolls;
+            saveConfig();
+        }
+
+        var wait = ecfg.WaitSeconds;
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.SliderInt("退出前等待(秒)##ew", ref wait, 3, 60))
+        {
+            ecfg.WaitSeconds = wait;
+            saveConfig();
+        }
+
+        var notify = ecfg.NotifyBeforeExit;
+        if (ImGui.Checkbox("退出前在聊天栏提示##en", ref notify))
+        {
+            ecfg.NotifyBeforeExit = notify;
+            saveConfig();
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("退出条件：下底过 + 场上无未开宝箱 + 无待投掷物品");
     }
 
     private void DrawMasterSwitch(AutoRollConfig cfg)

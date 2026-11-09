@@ -96,6 +96,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>自动投掷配置。</summary>
     public Loot.AutoRollConfig AutoRoll { get; set; } = new();
 
+    /// <summary>自动退出配置。</summary>
+    public Loot.AutoExitConfig AutoExit { get; set; } = new();
+
     public bool IsItemEnabled(uint itemId) => !DisabledItemIds.Contains(itemId);
 
     public void ToggleItem(uint itemId)

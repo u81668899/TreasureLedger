@@ -29,6 +29,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly ISigScanner sigScanner;
     private readonly IPartyFinderGui partyFinder;
     private readonly IFramework framework;
+    private readonly IObjectTable objectTable;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -44,6 +45,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly RecruitTracker recruit;
     private readonly RunGains runGains = new();
     private readonly TreasureContext treasureContext;
+    private readonly VaultProbe vaultProbe;
+    private readonly AutoExiter autoExiter;
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
@@ -62,7 +65,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         IClientState clientState,
         ISigScanner sigScanner,
         IPartyFinderGui partyFinder,
-        IFramework framework)
+        IFramework framework,
+        IObjectTable objectTable)
     {
         this.pluginInterface = pluginInterface;
         this.chat = chat;
@@ -73,6 +77,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         this.sigScanner = sigScanner;
         this.partyFinder = partyFinder;
         this.framework = framework;
+        this.objectTable = objectTable;
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
@@ -81,6 +86,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         recruit = new RecruitTracker(log, partyFinder);
 
         treasureContext = new TreasureContext(log);
+        vaultProbe = new VaultProbe(log, objectTable);
+        autoExiter = new AutoExiter(log, vaultProbe, msg => sender.SendTo(ReportChannel.Echo, config, msg));
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
 
@@ -260,6 +267,16 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
                 return;
 
             roller.RunOnce(cfg);
+
+            // 自动退出
+            var exitCfg = config.AutoExit;
+            if (exitCfg.Enabled)
+            {
+                var run = ledger.CurrentRun;
+                var hasBottom = run is not null && run.ReachedBottom;
+                if (autoExiter.Tick(exitCfg, tracker.CurrentDungeon is not null, hasBottom))
+                    commands.ProcessCommand("/退出副本");
+            }
         }
         catch (Exception ex)
         {
