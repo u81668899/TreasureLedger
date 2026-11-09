@@ -1,5 +1,5 @@
 using System;
-using System.IO;
+using System.Linq;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -30,10 +30,11 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly LootDeduplicator dedup = new();
     private readonly LootCapture capture;
     private readonly DungeonTracker tracker;
-    private readonly CommandRouter router;
+    private readonly ChatCommandListener chatCommands;
     private readonly LogProbe probe;
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
+    private DateTime lastPrune = DateTime.Now;
 
     public TreasureLedgerPlugin(
         IDalamudPluginInterface pluginInterface,
@@ -53,24 +54,20 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
 
-        // 状态机
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
-        tracker.StateChanged += () => { };
 
-        // 掉落捕获
         capture = new LootCapture(chat, log, catalog);
         capture.LootReceived += OnLoot;
+        capture.RollNotified += OnRollNotified;
         capture.GilReceived += OnGil;
         capture.LogSeen += OnLogSeen;
 
-        // 指令
-        router = new CommandRouter(commands, chat, log, config, ledger, SaveConfig, ResetLedger);
+        chatCommands = new ChatCommandListener(
+            chat, commands, log, config, ledger, ResetLedger);
 
-        // UI
         configWindow = new ConfigWindow(
-            config, ledger, tracker,
-            SaveConfig, ResetLedger,
-            () => router.Rebind(),
+            config, ledger, tracker, catalog,
+            SaveConfig, ResetLedger, () => { },
             s => commands.ProcessCommand(s));
         windowSystem.AddWindow(configWindow);
 
@@ -78,11 +75,10 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         pluginInterface.UiBuilder.OpenMainUi += ToggleConfigUi;
 
-        // 探针默认关
         probe = new LogProbe(log);
         if (config.EnableLogProbe) probe.Start(chat);
 
-        chat.Print($"[TreasureLedger] 已加载　查询：/{config.QueryCommand}　重置：/{config.ResetCommand}");
+        chat.Print($"[TreasureLedger] 已加载　聊天栏输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
         log.Information("[TreasureLedger] 加载完成");
     }
 
@@ -94,12 +90,13 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         windowSystem.RemoveAllWindows();
 
         capture.LootReceived -= OnLoot;
+        capture.RollNotified -= OnRollNotified;
         capture.GilReceived -= OnGil;
         capture.LogSeen -= OnLogSeen;
         capture.Dispose();
 
+        chatCommands.Dispose();
         tracker.Dispose();
-        router.Dispose();
         probe.Stop(chat);
         probe.Dispose();
 
@@ -116,26 +113,41 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         dedup.Reset();
     }
 
+    /// <summary>投掷通知：只登记，不计数。</summary>
+    private void OnRollNotified(uint itemId, int count)
+    {
+        if (!config.IsItemEnabled(itemId)) return;
+        dedup.RegisterRollPending(itemId);
+        log.Debug("[TreasureLedger] 投掷登记 {Item}×{N}，等待进包", catalog.GetName(itemId), count);
+    }
+
+    /// <summary>进包掉落：若命中投掷登记，来源记为投掷。</summary>
     private void OnLoot(LootEntry entry)
     {
         if (!config.IsItemEnabled(entry.ItemId))
         {
-            log.Debug("[TreasureLedger] 跳过已关闭物品：{Item}", entry.ItemName);
+            log.Debug("[TreasureLedger] 已关闭物品，跳过：{Item}", entry.ItemName);
             return;
         }
 
-        if (!dedup.ShouldAccept(entry, out var reason))
+        var source = entry.Source;
+        if (dedup.TryConsumeRollPending(entry.ItemId))
         {
-            log.Debug("[TreasureLedger] 去重：{Item}（{Reason}）", entry.ItemName, reason);
-            return;
+            source = LootSource.Roll;
+            log.Debug("[TreasureLedger] 命中投掷登记，来源改为投掷：{Item}", entry.ItemName);
         }
 
-        ledger.AddItem(entry.ItemId, entry.Count, entry.Source);
+        ledger.AddItem(entry.ItemId, entry.Count, source);
 
         if (config.PrintLootLocally)
-            chat.Print($"[TreasureLedger] +{entry.Count} {entry.ItemName} ({entry.Source})");
+            chat.Print($"[TreasureLedger] +{entry.Count} {entry.ItemName} ({source})");
 
-        log.Debug("[TreasureLedger] 记录掉落 {Item}×{Count} ({Source})", entry.ItemName, entry.Count, entry.Source);
+        // 定期清理过期登记
+        if (DateTime.Now - lastPrune > TimeSpan.FromMinutes(5))
+        {
+            dedup.Prune();
+            lastPrune = DateTime.Now;
+        }
     }
 
     private void OnGil(long amount) => ledger.Gil += amount;

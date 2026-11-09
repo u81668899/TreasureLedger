@@ -10,100 +10,79 @@ using TreasureLedger.Report;
 
 namespace TreasureLedger.UI;
 
-/// <summary>主配置窗口。</summary>
-public sealed class ConfigWindow : Window, IDisposable
+public sealed class ConfigWindow : Window
 {
     private readonly Configuration config;
     private readonly SessionLedger ledger;
     private readonly DungeonTracker tracker;
+    private readonly ItemCatalog catalog;
     private readonly Action saveConfig;
     private readonly Action resetLedger;
-    private readonly Action rebindCommands;
     private readonly Action<string> sendToChat;
+
+    // 添加自定义物品的输入缓冲
+    private string newItemId = string.Empty;
+    private string newItemName = string.Empty;
+    private int newItemTier = 5;
 
     public ConfigWindow(
         Configuration config,
         SessionLedger ledger,
         DungeonTracker tracker,
+        ItemCatalog catalog,
         Action saveConfig,
         Action resetLedger,
-        Action rebindCommands,
+        Action rebind,
         Action<string> sendToChat)
-        : base("Treasure Ledger###tl-config", ImGuiWindowFlags.NoScrollbar)
+        : base("Treasure Ledger###tl-config")
     {
         this.config = config;
         this.ledger = ledger;
         this.tracker = tracker;
+        this.catalog = catalog;
         this.saveConfig = saveConfig;
         this.resetLedger = resetLedger;
-        this.rebindCommands = rebindCommands;
         this.sendToChat = sendToChat;
 
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(420, 320),
+            MinimumSize = new Vector2(480, 360),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
-        Size = new Vector2(520, 620);
+        Size = new Vector2(560, 680);
     }
-
-    public void Dispose() { }
 
     public override void Draw()
     {
-        // ── 状态 ──
-        ImGui.TextDisabled("当前状态");
+        DrawHeader();
         ImGui.Separator();
-
-        var dg = tracker.CurrentDungeon;
-        ImGui.Text($"区域：{(dg?.Name ?? "不在宝库")}  (TT={tracker.CurrentTerritory})");
-        ImGui.Text($"金币：{ledger.Gil:n0}　图数：{ledger.MapCount}　洞数：{ledger.VaultCount}　底数：{ledger.BottomCount}");
-        ImGui.Spacing();
-
-        if (ImGui.Button("查询统计"))
-        {
-            foreach (var line in ReportFormatter.BuildFullReport(ledger, config.DisabledSet()))
-                sendToChat("/e " + line);
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("重置统计"))
-        {
-            resetLedger();
-        }
-        ImGui.Spacing();
 
         if (!ImGui.BeginTabBar("tl-tabs")) return;
 
-        if (ImGui.BeginTabItem("指令"))
-        {
-            DrawCommands();
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("频道"))
-        {
-            DrawChannels();
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("物品"))
-        {
-            DrawItems();
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("统计"))
-        {
-            DrawStats();
-            ImGui.EndTabItem();
-        }
+        if (ImGui.BeginTabItem("指令")) { DrawCommands(); ImGui.EndTabItem(); }
+        if (ImGui.BeginTabItem("频道")) { DrawChannels(); ImGui.EndTabItem(); }
+        if (ImGui.BeginTabItem("物品")) { DrawItems(); ImGui.EndTabItem(); }
+        if (ImGui.BeginTabItem("统计")) { DrawStats(); ImGui.EndTabItem(); }
 
         ImGui.EndTabBar();
     }
 
+    private void DrawHeader()
+    {
+        var dg = tracker.CurrentDungeon;
+        ImGui.Text($"区域：{(dg?.Name ?? "不在宝库")}　TT={tracker.CurrentTerritory}");
+        ImGui.Text($"金币 {ledger.Gil:n0}　图数 {ledger.MapCount}　洞数 {ledger.VaultCount}　底数 {ledger.BottomCount}");
+
+        if (ImGui.Button("查询到默语"))
+            sendToChat("/e " + ReportFormatter.BuildSummaryLine(ledger));
+        ImGui.SameLine();
+        if (ImGui.Button("重置"))
+            resetLedger();
+    }
+
     private void DrawCommands()
     {
-        ImGui.TextDisabled("指令可自定义，不需要 / 前缀。");
+        ImGui.TextDisabled("在聊天栏直接输入这些指令即可触发。哪个频道发的，就回哪个频道。");
         ImGui.Spacing();
 
         var q = config.QueryCommand;
@@ -121,41 +100,34 @@ public sealed class ConfigWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
-        if (ImGui.Button("应用指令修改"))
-        {
-            rebindCommands();
-            saveConfig();
-        }
-
-        ImGui.Spacing();
         ImGui.Separator();
 
-        var resetOnJoin = config.ResetOnPartyJoin;
-        if (ImGui.Checkbox("加入小队/开招募时自动重置", ref resetOnJoin))
+        var join = config.ResetOnPartyJoin;
+        if (ImGui.Checkbox("加入小队 / 开招募时自动重置", ref join))
         {
-            config.ResetOnPartyJoin = resetOnJoin;
+            config.ResetOnPartyJoin = join;
             saveConfig();
         }
 
-        var printLocal = config.PrintLootLocally;
-        if (ImGui.Checkbox("掉落时在本地打印（调试）", ref printLocal))
+        var print = config.PrintLootLocally;
+        if (ImGui.Checkbox("掉落时本地打印（调试）", ref print))
         {
-            config.PrintLootLocally = printLocal;
+            config.PrintLootLocally = print;
             saveConfig();
         }
     }
 
     private void DrawChannels()
     {
-        ImGui.TextDisabled("勾选需要播报的频道。默认只有默语。");
+        ImGui.TextDisabled("勾选允许响应查询的频道。默认只有默语。");
         ImGui.Spacing();
 
         foreach (var c in Enum.GetValues<ReportChannel>())
         {
-            var on = config.IsChannelEnabled(c);
-            if (ImGui.Checkbox(Configuration.ChannelName(c) + "  " + config.ChannelSlash(c), ref on))
+            var on = config.IsListenChannel(c);
+            if (ImGui.Checkbox($"{Configuration.ChannelName(c)}　{config.ChannelSlash(c).Trim()}", ref on))
             {
-                config.SetChannel(c, on);
+                config.SetListenChannel(c, on);
                 saveConfig();
             }
         }
@@ -163,23 +135,24 @@ public sealed class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
 
-        var lIdx = config.LocalLinkshellIndex;
-        if (ImGui.SliderInt("本服贝序号", ref lIdx, 1, 8))
+        var l = config.LocalLinkshellIndex;
+        if (ImGui.SliderInt("本服贝序号", ref l, 1, 8))
         {
-            config.LocalLinkshellIndex = lIdx;
+            config.LocalLinkshellIndex = l;
             saveConfig();
         }
 
-        var cIdx = config.CrossLinkshellIndex;
-        if (ImGui.SliderInt("跨服贝序号", ref cIdx, 1, 8))
+        var cl = config.CrossLinkshellIndex;
+        if (ImGui.SliderInt("跨服贝序号", ref cl, 1, 8))
         {
-            config.CrossLinkshellIndex = cIdx;
+            config.CrossLinkshellIndex = cl;
             saveConfig();
         }
     }
+
     private void DrawItems()
     {
-        ImGui.TextDisabled("取消勾选 = 不统计该物品。默认全选。");
+        ImGui.TextDisabled("取消勾选 = 不统计。按宝图分类分组。");
         ImGui.Spacing();
 
         if (ImGui.Button("全选"))
@@ -197,19 +170,96 @@ public sealed class ConfigWindow : Window, IDisposable
 
         ImGui.Separator();
 
-        if (!ImGui.BeginChild("tl-item-list", new Vector2(0, 0), true)) return;
+        if (!ImGui.BeginChild("tl-items", new Vector2(0, -110), true)) return;
 
-        foreach (var it in TrackedItems.All)
+        // 内置物品，按分类
+        foreach (var (tier, items) in TrackedItems.ByTier())
         {
-            var enabled = config.IsItemEnabled(it.ItemId);
-            if (ImGui.Checkbox($"{it.Display}  ({it.FullName})##{it.ItemId}", ref enabled))
+            if (!ImGui.CollapsingHeader($"{Configuration.TierName(tier)}  ({items.Count})##tier{(int)tier}"))
+                continue;
+
+            foreach (var it in items)
             {
-                config.ToggleItem(it.ItemId);
-                saveConfig();
+                var enabled = config.IsItemEnabled(it.ItemId);
+                if (ImGui.Checkbox($"{it.Display}　{it.FullName}##i{it.ItemId}", ref enabled))
+                {
+                    config.ToggleItem(it.ItemId);
+                    saveConfig();
+                }
+            }
+        }
+
+        // 用户自定义
+        if (config.CustomItems.Count > 0)
+        {
+            if (ImGui.CollapsingHeader($"自己添加 ({config.CustomItems.Count})##custom"))
+            {
+                foreach (var c in config.CustomItems.ToList())
+                {
+                    var enabled = config.IsItemEnabled(c.ItemId);
+                    if (ImGui.Checkbox($"[{Configuration.TierName(c.Tier)}] {c.Display}　#{c.ItemId}##c{c.ItemId}", ref enabled))
+                    {
+                        config.ToggleItem(c.ItemId);
+                        saveConfig();
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton($"删除##d{c.ItemId}"))
+                    {
+                        config.CustomItems.Remove(c);
+                        config.DisabledItemIds.Remove(c.ItemId);
+                        saveConfig();
+                    }
+                }
             }
         }
 
         ImGui.EndChild();
+
+        // 添加表单
+        ImGui.Separator();
+        ImGui.TextDisabled("添加物品（新版本自己补，不用等插件更新）");
+
+        ImGui.SetNextItemWidth(120);
+        ImGui.InputText("物品ID", ref newItemId, 16);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(160);
+        ImGui.InputText("显示名", ref newItemName, 32);
+
+        var tiers = Enum.GetValues<MapTier>();
+        var tierNames = tiers.Select(Configuration.TierName).ToArray();
+        ImGui.SetNextItemWidth(160);
+        ImGui.Combo("分类", ref newItemTier, tierNames, tierNames.Length);
+
+        if (ImGui.Button("添加"))
+        {
+            if (uint.TryParse(newItemId.Trim(), out var id) && id > 0)
+            {
+                var name = newItemName.Trim();
+                if (name.Length == 0)
+                    name = catalog.GetName(id);
+
+                if (!config.CustomItems.Any(x => x.ItemId == id))
+                {
+                    config.CustomItems.Add(new CustomItem
+                    {
+                        ItemId = id,
+                        Display = name.Length > 0 ? name : $"#{id}",
+                        Tier = tiers[Math.Clamp(newItemTier, 0, tiers.Length - 1)],
+                        UserAdded = true,
+                    });
+                    saveConfig();
+                    newItemId = string.Empty;
+                    newItemName = string.Empty;
+                }
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("从本地物品表查名字"))
+        {
+            if (uint.TryParse(newItemId.Trim(), out var id))
+                newItemName = catalog.GetName(id);
+        }
     }
 
     private void DrawStats()
@@ -217,13 +267,16 @@ public sealed class ConfigWindow : Window, IDisposable
         ImGui.TextDisabled("本次会话统计（按来源拆分）");
         ImGui.Separator();
 
+        if (!ImGui.BeginChild("tl-stats", new Vector2(0, 0), true)) return;
+
         var any = false;
-        foreach (var line in ReportFormatter.BuildSourceBreakdown(ledger))
+        foreach (var line in ReportFormatter.BuildSourceBreakdown(ledger, config))
         {
             ImGui.Text(line);
             any = true;
         }
-
         if (!any) ImGui.TextDisabled("还没有掉落记录。");
+
+        ImGui.EndChild();
     }
 }

@@ -4,41 +4,63 @@ using System.Collections.Generic;
 namespace TreasureLedger.Loot;
 
 /// <summary>
-/// 掉落去重：宝箱开启和投掷分配可能对同一件物品重复报两次。
-/// 规则：同一物品在 <see cref="DedupWindow"/> 内，Roll 来源优先于 Chest；
-/// 先到先得，后到的同源同物直接丢弃。
+/// 投掷与获取的去重。
+///
+/// 规则（按需求）：
+/// - 1254「获得了新的战利品」= 投掷成功通知，物品可能还在投掷阶段、很久才进包
+/// - 1232/1233「获得了"XX"」= 实际进包
+/// 同一物品可能先报 1254，几秒到几分钟后才报 1232。
+/// 因此不用时间窗，改用「物品 ID 投掷登记」：
+///   收到 1254 → 登记该物品处于投掷待入包状态，不计数
+///   收到 1232/1233 → 若该物品在待入包登记里，则消费登记，标记来源为 Roll；否则按普通掉落处理
 /// </summary>
 public sealed class LootDeduplicator
 {
-    /// <summary>去重时间窗。宝箱与投掷通常在同一秒内出现，2 秒足够。</summary>
-    public static readonly TimeSpan DedupWindow = TimeSpan.FromSeconds(2);
+    /// <summary>登记多久没兑现就作废，防止无限累积。</summary>
+    public static readonly TimeSpan PendingTimeout = TimeSpan.FromMinutes(30);
 
-    private readonly Dictionary<uint, DateTime> lastSeen = new();
+    private readonly Dictionary<uint, DateTime> pendingRoll = new();
 
-    /// <summary>返回 true 表示这条掉落应当被记录。</summary>
-    public bool ShouldAccept(LootEntry entry, out string reason)
+    /// <summary>
+    /// 投掷成功通知。登记为待入包，不计数。
+    /// </summary>
+    public void RegisterRollPending(uint itemId)
     {
-        reason = string.Empty;
+        if (itemId == 0) return;
+        pendingRoll[itemId] = DateTime.Now;
+    }
 
-        if (entry.Count <= 0)
+    /// <summary>
+    /// 判断这条进包掉落是否来自刚才的投掷。
+    /// 返回 true 表示消费了投掷登记，来源应记为 Roll。
+    /// </summary>
+    public bool TryConsumeRollPending(uint itemId)
+    {
+        if (!pendingRoll.TryGetValue(itemId, out var t)) return false;
+
+        if (DateTime.Now - t > PendingTimeout)
         {
-            reason = "数量为0";
+            pendingRoll.Remove(itemId);
             return false;
         }
 
-        if (lastSeen.TryGetValue(entry.ItemId, out var last))
-        {
-            var dt = entry.Time - last;
-            if (dt >= TimeSpan.Zero && dt < DedupWindow)
-            {
-                reason = $"与 {dt.TotalMilliseconds:F0}ms 前的同物品重复";
-                return false;
-            }
-        }
-
-        lastSeen[entry.ItemId] = entry.Time;
+        pendingRoll.Remove(itemId);
         return true;
     }
 
-    public void Reset() => lastSeen.Clear();
+    /// <summary>清理过期的待入包登记。</summary>
+    public void Prune()
+    {
+        var now = DateTime.Now;
+        var expired = new List<uint>();
+        foreach (var kv in pendingRoll)
+            if (now - kv.Value > PendingTimeout)
+                expired.Add(kv.Key);
+
+        foreach (var id in expired) pendingRoll.Remove(id);
+    }
+
+    public int PendingCount => pendingRoll.Count;
+
+    public void Reset() => pendingRoll.Clear();
 }
