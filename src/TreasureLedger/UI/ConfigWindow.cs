@@ -32,7 +32,6 @@ public sealed class ConfigWindow : Window
         ItemCatalog catalog,
         Action saveConfig,
         Action resetLedger,
-        Action rebind,
         Action<string> sendToChat)
         : base("Treasure Ledger###tl-config")
     {
