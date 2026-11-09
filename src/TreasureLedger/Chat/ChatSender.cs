@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Dalamud.Game.Text;
 using Dalamud.Plugin.Services;
 
@@ -62,23 +63,61 @@ public sealed class ChatSender : IDisposable
     }
 
     /// <summary>
-    /// 发到指定频道。
-    /// 预览模式下只本地回显并加频道前缀。
+    /// 发到指定频道。一个频道可能对应多个目标
+    /// （比如同时挂在 2 个通讯贝里，就都发一份）。
     /// </summary>
-    /// <param name="tellTarget">悄悄话的收件人名，只在 Tell 频道用到。</param>
+    /// <param name="tellTarget">悄悄话收件人，只在 Tell 频道用到。</param>
     public bool SendTo(ReportChannel channel, Configuration config, string text, string? tellTarget = null)
     {
         if (string.IsNullOrEmpty(text)) return false;
 
-        var kind = ResolveKind(channel, config);
+        if (channel == ReportChannel.Tell)
+            return SendTell(config, text, tellTarget);
 
-        if (PreviewOnly)
+        var kinds = ResolveKinds(channel, config);
+        var ok = false;
+
+        foreach (var kind in kinds)
+            ok |= Send(kind, text);
+
+        return ok;
+    }
+
+    /// <summary>
+    /// 悄悄话：发给每个指定对象。
+    /// 没指定对象时回给发消息给我们的人。
+    /// </summary>
+    private bool SendTell(Configuration config, string text, string? tellTarget)
+    {
+        // 目标是「固定名单」优先，其次回给发件人
+        var targets = config.TellTargets
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .ToList();
+
+        if (targets.Count == 0 && !string.IsNullOrWhiteSpace(tellTarget))
+            targets.Add(tellTarget.Trim());
+
+        if (targets.Count == 0)
         {
-            PrintLocal($"[{Configuration.ChannelName(channel)}] {text}");
-            return true;
+            log.Warning("[TreasureLedger] 悄悄话缺少收件人，已跳过");
+            return false;
         }
 
-        return Send(kind, text, tellTarget: tellTarget);
+        var ok = false;
+        foreach (var t in targets)
+        {
+            if (PreviewOnly)
+            {
+                PrintLocal($"[悄悄话→{t}] {text}");
+                ok = true;
+                continue;
+            }
+
+            ok |= Send(XivChatType.TellOutgoing, text, tellTarget: t);
+        }
+
+        return ok;
     }
 
     /// <summary>
@@ -87,7 +126,7 @@ public sealed class ChatSender : IDisposable
     /// 依据 Dalamud 源码 ChatGui.UpdateQueue：
     ///     var targetChannel = chat.Type ?? this.configuration.GeneralChatType;
     ///     HandlePrintMessageDetour(..., new LogInfo { LogKind = (ushort)targetChannel }, ...)
-    /// 所以只要 Type 不为 null，频道就由我们决定，不会走「通用聊天类型」。
+    /// 所以只要 Type 不为 null，频道就由我们决定。
     ///
     /// 悄悄话需要 Name 填收件人名（游戏用它决定发给谁）。
     /// </summary>
@@ -124,14 +163,23 @@ public sealed class ChatSender : IDisposable
         }
     }
 
-    private static XivChatType ResolveKind(ReportChannel channel, Configuration config) => channel switch
+    /// <summary>一个频道可能对应多个实际聊天类型（多个贝）。</summary>
+    private static XivChatType[] ResolveKinds(ReportChannel channel, Configuration config) => channel switch
     {
-        ReportChannel.Echo => XivChatType.Echo,
-        ReportChannel.Party => XivChatType.Party,
-        ReportChannel.LinkshellLocal => LocalLsType(config.LocalLinkshellIndex),
-        ReportChannel.CrossWorldLinkshell => CrossLsType(config.CrossLinkshellIndex),
-        ReportChannel.Tell => XivChatType.TellOutgoing,
-        _ => XivChatType.Echo,
+        ReportChannel.Echo => new[] { XivChatType.Echo },
+        ReportChannel.Party => new[] { XivChatType.Party },
+        ReportChannel.LinkshellLocal => config.LocalLinkshellIndices
+            .Where(i => i is >= 1 and <= 8)
+            .DefaultIfEmpty(1)
+            .Select(LocalLsType)
+            .ToArray(),
+        ReportChannel.CrossWorldLinkshell => config.CrossLinkshellIndices
+            .Where(i => i is >= 1 and <= 8)
+            .DefaultIfEmpty(1)
+            .Select(CrossLsType)
+            .ToArray(),
+        ReportChannel.Tell => new[] { XivChatType.TellOutgoing },
+        _ => new[] { XivChatType.Echo },
     };
 
     private static XivChatType LocalLsType(int index) => index switch

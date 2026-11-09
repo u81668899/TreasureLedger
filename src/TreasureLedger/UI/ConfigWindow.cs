@@ -219,13 +219,13 @@ public sealed class ConfigWindow
 
     private void DrawChannels()
     {
-        ImGui.TextDisabled("勾选允许响应查询的频道。默认只有默语。");
+        ImGui.TextDisabled("勾选允许响应查询的频道。哪个频道发来，就回哪个频道。");
         ImGui.Spacing();
 
         foreach (var c in Enum.GetValues<ReportChannel>())
         {
             var on = config.IsListenChannel(c);
-            if (ImGui.Checkbox($"{Configuration.ChannelName(c)}　{config.ChannelSlash(c).Trim()}", ref on))
+            if (ImGui.Checkbox($"{Configuration.ChannelName(c)}##ch{(int)c}", ref on))
             {
                 config.SetListenChannel(c, on);
                 saveConfig();
@@ -234,30 +234,68 @@ public sealed class ConfigWindow
 
         ImGui.Spacing();
         ImGui.Separator();
+        ImGui.TextDisabled("通讯贝可以同时挂多个，点格子多选");
 
-        var l = config.LocalLinkshellIndex;
-        if (ImGui.SliderInt("本服贝序号", ref l, 1, 8))
-        {
-            config.LocalLinkshellIndex = l;
-            saveConfig();
-        }
+        DrawLinkshellGrid(
+            "本服贝",
+            config.LocalLinkshellIndices,
+            i => config.LocalLinkshellIndices = i);
 
-        var cl = config.CrossLinkshellIndex;
-        if (ImGui.SliderInt("跨服贝序号", ref cl, 1, 8))
-        {
-            config.CrossLinkshellIndex = cl;
-            saveConfig();
-        }
+        DrawLinkshellGrid(
+            "跨服贝",
+            config.CrossLinkshellIndices,
+            i => config.CrossLinkshellIndices = i);
 
         ImGui.Spacing();
-        ImGui.TextDisabled("悄悄话回给谁：留空则自动回给最近发消息给你的人");
+        ImGui.Separator();
+        ImGui.TextDisabled("悄悄话：默认回给发消息给你的人。留空即可，无需设置。");
 
-        var tell = config.TellTargetName;
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.InputText("悄悄话对象", ref tell, 32))
+        if (config.TellTargets.Count > 0)
         {
-            config.TellTargetName = tell;
-            saveConfig();
+            ImGui.TextDisabled("当前固定名单：" + string.Join("、", config.TellTargets));
+            if (ImGui.SmallButton("清空固定名单"))
+            {
+                config.TellTargets.Clear();
+                saveConfig();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 通讯贝多选：1-8 八个格子，点亮表示启用。
+    /// 比滑动条直观，而且允许同时选多个。
+    /// </summary>
+    private void DrawLinkshellGrid(string label, List<int> current, Action<List<int>> setter)
+    {
+        var selected = new HashSet<int>(current);
+
+        ImGui.Text(label);
+        ImGui.SameLine();
+
+        for (var i = 1; i <= 8; i++)
+        {
+            var on = selected.Contains(i);
+
+            if (on)
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.25f, 0.55f, 0.30f, 1f));
+            else
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.25f, 0.25f, 0.28f, 1f));
+
+            if (ImGui.Button($"{i}##{label}{i}", new Vector2(28, 24)))
+            {
+                if (on) selected.Remove(i);
+                else selected.Add(i);
+
+                // 至少留一个，避免全部关掉后无处可发
+                if (selected.Count == 0) selected.Add(i);
+
+                setter(selected.OrderBy(x => x).ToList());
+                saveConfig();
+            }
+
+            ImGui.PopStyleColor();
+
+            if (i < 8) ImGui.SameLine();
         }
     }
 

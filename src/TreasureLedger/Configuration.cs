@@ -57,8 +57,17 @@ public sealed class Configuration : IPluginConfiguration
     public int LocalLinkshellIndex { get; set; } = 1;
     public int CrossLinkshellIndex { get; set; } = 1;
 
-    /// <summary>悄悄话频道回给谁。留空则回给发消息的人。</summary>
-    public string TellTargetName { get; set; } = string.Empty;
+    /// <summary>
+    /// 启用的本服贝序号（1-8，可多选）。
+    /// 玩家可能同时挂在好几个贝里，查询要能回多个。
+    /// </summary>
+    public List<int> LocalLinkshellIndices { get; set; } = new() { 1 };
+
+    /// <summary>启用的跨服贝序号（1-8，可多选）。</summary>
+    public List<int> CrossLinkshellIndices { get; set; } = new() { 1 };
+
+    /// <summary>悄悄话固定回复对象（可多个）。留空则回给发消息的人。</summary>
+    public List<string> TellTargets { get; set; } = new();
 
     // ── 物品 ──────────────────────────────────────────
     /// <summary>被关闭统计的内置物品 ID。</summary>
@@ -100,15 +109,34 @@ public sealed class Configuration : IPluginConfiguration
         if (!on) ListenChannels.Remove(c);
     }
 
-    /// <summary>频道 → 游戏内指令前缀。</summary>
+    /// <summary>频道 → 游戏内指令前缀（单值版，用于显示）。</summary>
     public string ChannelSlash(ReportChannel c) => c switch
     {
         ReportChannel.Echo => "/e ",
         ReportChannel.Party => "/p ",
-        ReportChannel.LinkshellLocal => $"/l{LocalLinkshellIndex} ",
-        ReportChannel.CrossWorldLinkshell => $"/cwl{CrossLinkshellIndex} ",
-        ReportChannel.Tell => "/tell " + TellTargetName + " ",
+        ReportChannel.LinkshellLocal => $"/l{LocalLinkshellIndices.FirstOrDefault(1)} ",
+        ReportChannel.CrossWorldLinkshell => $"/cwl{CrossLinkshellIndices.FirstOrDefault(1)} ",
+        ReportChannel.Tell => "/tell ",
         _ => "/e ",
+    };
+
+    /// <summary>该频道对应的所有发送目标（多个贝时会有多条）。</summary>
+    public string[] ChannelSlashes(ReportChannel c) => c switch
+    {
+        ReportChannel.Echo => new[] { "/e " },
+        ReportChannel.Party => new[] { "/p " },
+        ReportChannel.LinkshellLocal => LocalLinkshellIndices
+            .Where(i => i is >= 1 and <= 8)
+            .DefaultIfEmpty(1)
+            .Select(i => $"/l{i} ")
+            .ToArray(),
+        ReportChannel.CrossWorldLinkshell => CrossLinkshellIndices
+            .Where(i => i is >= 1 and <= 8)
+            .DefaultIfEmpty(1)
+            .Select(i => $"/cwl{i} ")
+            .ToArray(),
+        ReportChannel.Tell => new[] { "/tell " },
+        _ => new[] { "/e " },
     };
 
     public static string ChannelName(ReportChannel c) => c switch
