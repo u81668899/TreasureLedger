@@ -23,6 +23,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly IDataManager data;
     private readonly ICommandManager commands;
     private readonly IClientState clientState;
+    private readonly ISigScanner sigScanner;
+    private readonly AutoRoller roller;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -43,7 +45,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         IPluginLog log,
         IDataManager data,
         ICommandManager commands,
-        IClientState clientState)
+        IClientState clientState,
+        ISigScanner sigScanner)
     {
         this.pluginInterface = pluginInterface;
         this.chat = chat;
@@ -51,6 +54,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         this.data = data;
         this.commands = commands;
         this.clientState = clientState;
+        this.sigScanner = sigScanner;
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
@@ -82,8 +86,14 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         probe = new LogProbe(log);
         if (config.EnableLogProbe) probe.Start(chat);
 
-        chat.Print($"[TreasureLedger] v{typeof(TreasureLedgerPlugin).Assembly.GetName().Version} 已加载　输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
-        log.Information("[TreasureLedger] 加载完成");
+        // 自动投掷：定位投掷函数（只定位，不执行任何投掷）
+        roller = new AutoRoller(log, sigScanner);
+        var rollReady = roller.TryInitialize();
+
+        chat.Print($"[TreasureLedger] v{typeof(TreasureLedgerPlugin).Assembly.GetName().Version} 已加载　" +
+                   $"输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
+        chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪（特征码未匹配）")}");
+        log.Information("[TreasureLedger] 加载完成，投掷函数就绪={Ready}", rollReady);
     }
 
     public void Dispose()
@@ -102,6 +112,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         chatCommands.Dispose();
         tracker.Dispose();
         sender.Dispose();
+        roller.Dispose();
         probe.Stop(chat);
         probe.Dispose();
 

@@ -60,12 +60,14 @@ public sealed class DungeonTracker : IDisposable
             // 进入宝库
             if (prev is null || prev.Name != CurrentDungeon.Name)
             {
-                ledger.VaultCount++;   // 洞数
-                ledger.MapCount++;     // 地图数（任务开始）
+                ledger.VaultCount++;   // 洞数：进本就算开洞
                 ledger.StartRun(CurrentDungeon.Name, territory);
 
-                log.Information("[TreasureLedger] 进入 {Name} (TT={TT})　洞数={Vault} 地图数={Map}",
-                    CurrentDungeon.Name, territory, ledger.VaultCount, ledger.MapCount);
+                // 注意：地图数不在这里加。
+                // 任务开始只是「进了宝库」，还没消耗新地图；
+                // 地图数只在「陷阱魔物全清」时 +1。
+                log.Information("[TreasureLedger] 进入 {Name} (TT={TT})　洞数={Vault}",
+                    CurrentDungeon.Name, territory, ledger.VaultCount);
             }
         }
         else if (prev is not null)
