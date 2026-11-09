@@ -178,7 +178,7 @@ public sealed class HistoryWindow
                     .Select(x =>
                     {
                         var item = TrackedItems.FindBuiltin(x.Id);
-                        var name = item?.Display ?? $"#{x.Id}";
+                        var name = item?.ReportName ?? $"#{x.Id}";
                         return $"{name}×{x.Count}";
                     });
                 ImGui.TextWrapped(string.Join("　", parts));
@@ -233,7 +233,7 @@ public sealed class HistoryWindow
                 .Select(kv =>
                 {
                     var item = TrackedItems.FindBuiltin(kv.Key);
-                    var name = item?.Display ?? $"#{kv.Key}";
+                    var name = item?.ReportName ?? $"#{kv.Key}";
                     return $"{name}×{kv.Value}";
                 });
             ImGui.TextWrapped(string.Join("　", parts));

@@ -29,6 +29,10 @@ public sealed class ConfigWindow
     private string newItemName = string.Empty;
     private int newItemTier = 5;
 
+    // 解析后的物品（名字或 ID 输入都会归一到这两个字段）
+    private uint resolvedItemId;
+    private string resolvedItemName = string.Empty;
+
     public ConfigWindow(
         Configuration config,
         SessionLedger ledger,
@@ -225,7 +229,7 @@ public sealed class ConfigWindow
             foreach (var it in items)
             {
                 var enabled = config.IsItemEnabled(it.ItemId);
-                if (ImGui.Checkbox($"{it.Display}　{it.FullName}##i{it.ItemId}", ref enabled))
+                if (ImGui.Checkbox($"{it.ReportName}##i{it.ItemId}", ref enabled))
                 {
                     config.ToggleItem(it.ItemId);
                     saveConfig();
@@ -261,49 +265,103 @@ public sealed class ConfigWindow
 
         // 添加表单
         ImGui.Separator();
-        ImGui.TextDisabled("添加物品（新版本自己补，不用等插件更新）");
+        ImGui.TextDisabled("添加物品：输入物品名或物品 ID 都可以，会自动匹配另一个");
 
-        ImGui.SetNextItemWidth(120);
-        ImGui.InputText("物品ID", ref newItemId, 16);
+        ImGui.SetNextItemWidth(220);
+        ImGui.InputText("物品名或ID", ref newItemId, 96);
+
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(160);
-        ImGui.InputText("显示名", ref newItemName, 32);
+        if (ImGui.SmallButton("查找"))
+        {
+            ResolveItemInput();
+        }
+
+        // 解析结果提示
+        if (resolvedItemId != 0)
+        {
+            ImGui.TextDisabled($"→ #{resolvedItemId}  {resolvedItemName}");
+        }
+        else if (newItemId.Trim().Length > 0)
+        {
+            ImGui.TextDisabled("→ 未找到匹配物品");
+        }
+
+        ImGui.SetNextItemWidth(220);
+        ImGui.InputText("统计显示名（留空=用游戏原名）", ref newItemName, 64);
 
         var tiers = Enum.GetValues<MapTier>();
         var tierNames = tiers.Select(Configuration.TierName).ToArray();
-        ImGui.SetNextItemWidth(160);
+        ImGui.SetNextItemWidth(140);
         ImGui.Combo("分类", ref newItemTier, tierNames, tierNames.Length);
 
         if (ImGui.Button("添加"))
         {
-            if (uint.TryParse(newItemId.Trim(), out var id) && id > 0)
-            {
-                var name = newItemName.Trim();
-                if (name.Length == 0)
-                    name = catalog.GetName(id);
-
-                if (!config.CustomItems.Any(x => x.ItemId == id))
-                {
-                    config.CustomItems.Add(new CustomItem
-                    {
-                        ItemId = id,
-                        Display = name.Length > 0 ? name : $"#{id}",
-                        Tier = tiers[Math.Clamp(newItemTier, 0, tiers.Length - 1)],
-                        UserAdded = true,
-                    });
-                    saveConfig();
-                    newItemId = string.Empty;
-                    newItemName = string.Empty;
-                }
-            }
+            AddResolvedItem(tiers);
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("从本地物品表查名字"))
+        if (ImGui.Button("清空"))
         {
-            if (uint.TryParse(newItemId.Trim(), out var id))
-                newItemName = catalog.GetName(id);
+            newItemId = string.Empty;
+            newItemName = string.Empty;
+            resolvedItemId = 0;
+            resolvedItemName = string.Empty;
         }
+    }
+
+    /// <summary>把输入框内容解析成物品 ID（支持名字或 ID 两种输入）。</summary>
+    private void ResolveItemInput()
+    {
+        resolvedItemId = 0;
+        resolvedItemName = string.Empty;
+
+        var input = newItemId.Trim();
+        if (input.Length == 0) return;
+
+        // 输入是纯数字 → 当 ID 查名字
+        if (uint.TryParse(input, out var id) && id > 0)
+        {
+            var name = catalog.GetName(id);
+            if (name.Length > 0)
+            {
+                resolvedItemId = id;
+                resolvedItemName = name;
+                return;
+            }
+        }
+
+        // 否则当名字查 ID
+        var found = catalog.FindByName(input);
+        if (found is not null)
+        {
+            resolvedItemId = found.Value.ItemId;
+            resolvedItemName = found.Value.Name;
+        }
+    }
+
+    private void AddResolvedItem(MapTier[] tiers)
+    {
+        if (resolvedItemId == 0)
+            ResolveItemInput();
+
+        if (resolvedItemId == 0) return;
+        if (config.CustomItems.Any(x => x.ItemId == resolvedItemId)) return;
+        if (TrackedItems.FindBuiltin(resolvedItemId) is not null) return;
+
+        config.CustomItems.Add(new CustomItem
+        {
+            ItemId = resolvedItemId,
+            Display = newItemName.Trim(),   // 留空则播报时回退到游戏原名
+            Tier = tiers[Math.Clamp(newItemTier, 0, tiers.Length - 1)],
+            UserAdded = true,
+        });
+
+        saveConfig();
+
+        newItemId = string.Empty;
+        newItemName = string.Empty;
+        resolvedItemId = 0;
+        resolvedItemName = string.Empty;
     }
 
     private void DrawStats()

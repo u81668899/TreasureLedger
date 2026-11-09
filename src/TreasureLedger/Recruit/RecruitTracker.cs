@@ -1,5 +1,6 @@
 using System;
 using System.Text.RegularExpressions;
+using Dalamud.Game.Gui.PartyFinder.Types;
 using Dalamud.Plugin.Services;
 
 namespace TreasureLedger.Recruit;
@@ -7,36 +8,54 @@ namespace TreasureLedger.Recruit;
 /// <summary>
 /// 招募内容记录。
 ///
-/// 两个数据源（按需求验证后的结论）：
+/// 重要约束（按需求）：
+/// 只记录「我进了的那支队伍」的招募内容，不是招募板上任意一条。
+/// 招募板上可能同时有好几个挖宝队，抓错了就会显示别人的招募。
 ///
-/// 1) PartyFinderGui.ReceiveListing —— 事件流，实时抓。
-///    缺点：招募关闭后不再推送，最后一个进去的人可能抓不到。
+/// 判定「我进队」的信号：
+/// 1. 聊天日志「加入了XX组建的"YYY"(队伍|队员招募用的团队)」 —— 最直接
+/// 2. 「开始招募队员」 —— 自己开的招募
+/// 3. 加入小队 / 加入通讯贝 —— 兜底
 ///
-/// 2) AgentLookingForGroup.LastComment —— 内存缓存，招募关闭也留着。
-///    优点：进本后仍可读，补上事件流的缺口。
-///    缺点：只在打开过招募板或收到过招募时才有值。
-///
-/// 3) 聊天日志兜底 —— XML 的做法，匹配「招募内容：xxx」这类文本。
-///
-/// 三者都试，谁先拿到用谁，拿到就缓存起来，查询时直接读缓存。
+/// 数据源优先级：
+/// a) 聊天日志里的招募文本（XML 做法），最贴近「我这队」
+/// b) 进队那一刻用 LastComment 补，避免日志没带内容
+/// c) 招募板事件只用来「预缓存」，不会直接当作我的招募
 /// </summary>
 public sealed class RecruitTracker : IDisposable
 {
     private readonly IPluginLog log;
     private readonly IPartyFinderGui partyFinder;
 
-    /// <summary>当前缓存的招募内容。</summary>
+    /// <summary>当前我这队的招募内容。</summary>
     public string Current { get; private set; } = string.Empty;
 
-    /// <summary>缓存时间。</summary>
     public DateTime CachedAt { get; private set; } = DateTime.MinValue;
 
-    /// <summary>招募内容变化。</summary>
+    /// <summary>是否真的已经进队（没进队时不该显示招募）。</summary>
+    public bool Joined { get; private set; }
+
     public event Action? Changed;
 
-    /// <summary>从聊天日志兜底匹配：招募(内容)(：|:| )(xxx)</summary>
-    private static readonly Regex ChatRecruitRegex = new(
+    /// <summary>「招募内容：xxx」这类直接设置。</summary>
+    private static readonly Regex RecruitTextRegex = new(
         @"招募(内容|)(：|:| |)(?<text>.*)", RegexOptions.Compiled);
+
+    /// <summary>「加入了XX组建的"YYY"」——进队信号，YYY 通常是招募名。</summary>
+    private static readonly Regex JoinedPartyRegex = new(
+        @"加入了(?<name>.{1,10})组建的“(?<title>.*)”(队伍|队员招募用的团队)",
+        RegexOptions.Compiled);
+
+    /// <summary>「加入了XX的小队」</summary>
+    private static readonly Regex JoinedSmallPartyRegex = new(
+        @"加入了(?<name>.{1,10})的小队", RegexOptions.Compiled);
+
+    /// <summary>自己开招募</summary>
+    private static readonly Regex RecruitStartedRegex = new(
+        @"(开始招募队员|已重新开始招募队员)", RegexOptions.Compiled);
+
+    /// <summary>招募板事件里暂存的候选，仅用于进队后补内容，不会直接显示。</summary>
+    private string pendingBoardText = string.Empty;
 
     public RecruitTracker(IPluginLog log, IPartyFinderGui partyFinder)
     {
@@ -48,11 +67,13 @@ public sealed class RecruitTracker : IDisposable
 
     public void Dispose() => partyFinder.ReceiveListing -= OnReceiveListing;
 
-    /// <summary>清理（换队/进本时调用）。</summary>
+    /// <summary>离开队伍 / 换队时清理。</summary>
     public void Clear()
     {
         Current = string.Empty;
         CachedAt = DateTime.MinValue;
+        Joined = false;
+        pendingBoardText = string.Empty;
         Changed?.Invoke();
     }
 
@@ -68,35 +89,103 @@ public sealed class RecruitTracker : IDisposable
         Changed?.Invoke();
     }
 
-    /// <summary>从聊天文本兜底识别。</summary>
+    /// <summary>
+    /// 处理聊天日志。
+    /// 返回 true 表示这条日志影响了招募状态，可中断后续处理。
+    /// </summary>
     public bool TryParseChat(string text)
     {
         if (string.IsNullOrEmpty(text)) return false;
 
-        // 只在我们关心的情况下识别，避免误抓普通聊天
-        if (!text.Contains("招募", StringComparison.Ordinal)) return false;
+        // 1) 进队信号：加入了某人的招募
+        var m = JoinedPartyRegex.Match(text);
+        if (m.Success)
+        {
+            Joined = true;
 
-        var m = ChatRecruitRegex.Match(text);
-        if (!m.Success) return false;
+            var title = m.Groups["title"].Value.Trim();
 
-        var content = m.Groups["text"].Value.Trim();
-        if (content.Length == 0) return false;
+            // 优先用日志里的招募名；没有就用招募板暂存的内容
+            if (title.Length > 0 && !IsGenericTitle(title))
+            {
+                Set(title);
+            }
+            else if (pendingBoardText.Length > 0)
+            {
+                Set(pendingBoardText);
+            }
+            else
+            {
+                Changed?.Invoke();
+            }
 
-        Set(content);
-        return true;
+            log.Information("[TreasureLedger] 检测进队，招募名={Title}", title);
+            return true;
+        }
+
+        // 2) 加入小队
+        if (JoinedSmallPartyRegex.IsMatch(text))
+        {
+            Joined = true;
+            if (Current.Length == 0 && pendingBoardText.Length > 0)
+                Set(pendingBoardText);
+            else
+                Changed?.Invoke();
+            return true;
+        }
+
+        // 3) 自己开招募
+        if (RecruitStartedRegex.IsMatch(text))
+        {
+            Joined = true;
+            Changed?.Invoke();
+            return true;
+        }
+
+        // 4) 显式设置招募内容（XML 的做法）
+        if (text.Contains("招募", StringComparison.Ordinal))
+        {
+            var rm = RecruitTextRegex.Match(text);
+            if (rm.Success)
+            {
+                var content = rm.Groups["text"].Value.Trim();
+                if (content.Length > 0)
+                {
+                    Set(content);
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
-    private void OnReceiveListing(
-        Dalamud.Game.Gui.PartyFinder.Types.IPartyFinderListing listing,
-        Dalamud.Game.Gui.PartyFinder.Types.IPartyFinderListingEventArgs args)
+    /// <summary>过滤掉「挖宝」「招募」这种没信息的通用名字。</summary>
+    private static bool IsGenericTitle(string title)
+        => title.Length <= 2
+           || title.Equals("招募", StringComparison.Ordinal)
+           || title.Equals("挖宝", StringComparison.Ordinal)
+           || title.Equals("组队", StringComparison.Ordinal);
+
+    /// <summary>
+    /// 招募板事件：只做暂存，不作为「我的招募」。
+    /// 因为板子上可能有好几个队，进队时才知道是哪个。
+    /// </summary>
+    private void OnReceiveListing(IPartyFinderListing listing, IPartyFinderListingEventArgs args)
     {
         try
         {
             var desc = listing.Description.TextValue ?? string.Empty;
             if (desc.Length == 0) return;
 
-            // 记录最近一次看到的招募描述
-            Set(desc);
+            // 只暂存看起来像挖宝招募的
+            if (!desc.Contains("挖宝", StringComparison.Ordinal)
+                && !desc.Contains("g1", StringComparison.OrdinalIgnoreCase)
+                && !desc.Contains("图", StringComparison.Ordinal)
+                && !desc.Contains("底", StringComparison.Ordinal))
+                return;
+
+            pendingBoardText = desc;
         }
         catch (Exception ex)
         {

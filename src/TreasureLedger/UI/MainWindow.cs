@@ -8,7 +8,6 @@ namespace TreasureLedger.UI;
 
 /// <summary>
 /// 主窗口：把各页面用标签页组织起来。
-/// 每个页面实现 <see cref="IPage"/>。
 /// </summary>
 public sealed class MainWindow : Window
 {
@@ -23,12 +22,20 @@ public sealed class MainWindow : Window
     public MainWindow()
         : base("Treasure Ledger###tl-main")
     {
+        // 明确允许缩放：不设置 NoResize，且给一个合理的下限。
+        // 之前不能缩放的根因是没有设置 SizeConstraints 导致的默认行为异常，
+        // 这里显式给出，并把下限放小，保证小窗也能用。
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(640, 420),
+            MinimumSize = new Vector2(360, 240),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
+
         Size = new Vector2(900, 620);
+        SizeCondition = ImGuiCond.FirstUseEver;
+
+        // 允许调整大小、允许移动、允许折叠
+        Flags = ImGuiWindowFlags.None;
     }
 
     public void Add(string title, object page)
@@ -52,7 +59,7 @@ public sealed class MainWindow : Window
         ImGui.EndTabBar();
     }
 
-    /// <summary>把已有的页面对象包装成 IPage。</summary>
+    /// <summary>把已有页面包装成 IPage。</summary>
     private sealed class PageWrapper : IPage
     {
         private readonly object inner;

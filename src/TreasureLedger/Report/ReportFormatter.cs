@@ -83,7 +83,7 @@ public static class ReportFormatter
                 if (!config.IsItemEnabled(it.ItemId)) continue;
                 var n = ledger.GetCount(it.ItemId);
                 if (n <= 0) continue;
-                sb.Append(it.Display).Append('×').Append(n).Append('　');
+                sb.Append(it.ReportName).Append('×').Append(n).Append('　');
             }
 
             if (sb.Length == 0) continue;
@@ -128,7 +128,7 @@ public static class ReportFormatter
             var c = bySrc?.GetValueOrDefault(Loot.LootSource.Chest) ?? 0;
             var r = bySrc?.GetValueOrDefault(Loot.LootSource.Roll) ?? 0;
 
-            yield return $"[{Configuration.TierName(it.Tier)}] {it.Display}×{total}　小怪{m}/宝箱{c}/投掷{r}";
+            yield return $"[{Configuration.TierName(it.Tier)}] {it.ReportName}×{total}　小怪{m}/宝箱{c}/投掷{r}";
         }
     }
 }
