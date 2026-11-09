@@ -81,8 +81,15 @@ public sealed class ChatSender : IDisposable
     }
 
     /// <summary>
-    /// 用官方封装发送。XivChatEntry 的 Type 指定频道，
-    /// Dalamud 内部会处理 sender 与 Utf8String，不碰原生指针。
+    /// 用官方封装发送。XivChatEntry 的 Type 指定频道。
+    ///
+    /// 依据 Dalamud 源码 ChatGui.UpdateQueue：
+    ///     var targetChannel = chat.Type ?? this.configuration.GeneralChatType;
+    ///     HandlePrintMessageDetour(..., new LogInfo { LogKind = (ushort)targetChannel }, ...)
+    /// 所以只要 Type 不为 null，频道就由我们决定，不会走「通用聊天类型」。
+    ///
+    /// 注意：不要用 chat.Print(string) —— 源码里它固定使用
+    /// configuration.GeneralChatType，跟当前标签页无关，会永远跑到同一个频道。
     /// </summary>
     public bool Send(XivChatType kind, string text, string? displayName = null)
     {

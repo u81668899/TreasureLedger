@@ -61,11 +61,10 @@ public sealed class Configuration : IPluginConfiguration
     public bool EnableLogProbe { get; set; } = false;
 
     /// <summary>
-    /// 仅本地预览频道输出（默认开）。
-    /// 关闭后才会真正调用 Print(XivChatEntry) 发到频道。
-    /// 因为 22:55 曾因原生调用崩过游戏，这里默认保守。
+    /// 仅本地预览频道输出。
+    /// 关闭后走 IChatGui.Print(XivChatEntry)，由 Type 指定频道（官方安全封装）。
     /// </summary>
-    public bool ChannelPreviewOnly { get; set; } = true;
+    public bool ChannelPreviewOnly { get; set; } = false;
 
     public bool IsItemEnabled(uint itemId) => !DisabledItemIds.Contains(itemId);
 
