@@ -221,9 +221,12 @@ public sealed class ConfigWindow
         if (!ImGui.BeginChild("tl-items", new Vector2(0, -150), true)) return;
 
         // 内置物品，按分类
+        // 注意：折叠面板的 ID 必须固定，所以用 ### 而不是 ##。
+        // ## 只是把后半段从显示里隐藏，整串仍然参与 ID 哈希；
+        // ### 之后的字符串才完全决定 ID。
         foreach (var (tier, items) in TrackedItems.ByTier())
         {
-            if (!ImGui.CollapsingHeader($"{Configuration.TierName(tier)}  ({items.Count})##tier{(int)tier}"))
+            if (!ImGui.CollapsingHeader($"{Configuration.TierName(tier)}  ({items.Count})###tier{(int)tier}"))
                 continue;
 
             DrawItemTable($"tier{(int)tier}", items, allowDelete: false);
@@ -232,7 +235,7 @@ public sealed class ConfigWindow
         // 用户自定义
         if (config.CustomItems.Count > 0)
         {
-            if (ImGui.CollapsingHeader($"自己添加 ({config.CustomItems.Count})##custom"))
+            if (ImGui.CollapsingHeader($"自己添加 ({config.CustomItems.Count})###custom"))
             {
                 var customs = config.CustomItems
                     .Select(c => new TrackedItem(
@@ -314,15 +317,19 @@ public sealed class ConfigWindow
 
         ImGui.TableHeadersRow();
 
+        // 删除要延迟到表格画完后再执行，
+        // 否则中途改集合会让 ImGui 的折叠状态错乱。
+        uint toDelete = 0;
+
         foreach (var it in items)
         {
             ImGui.TableNextRow();
+            ImGui.PushID((int)it.ItemId);
 
             // 1) 勾选
             ImGui.TableNextColumn();
             var enabled = config.IsItemEnabled(it.ItemId);
-            // checkbox 标签留空避免撑宽，用 ID 作隐藏后缀保证唯一
-            if (ImGui.Checkbox($"##chk{tableId}{it.ItemId}", ref enabled))
+            if (ImGui.Checkbox("##chk", ref enabled))
             {
                 config.ToggleItem(it.ItemId);
                 saveConfig();
@@ -332,10 +339,8 @@ public sealed class ConfigWindow
             ImGui.TableNextColumn();
             var display = GetDisplay(it.ItemId, it.UserAdded);
             ImGui.SetNextItemWidth(-1);
-            if (ImGui.InputText($"##disp{tableId}{it.ItemId}", ref display, 64))
-            {
+            if (ImGui.InputText("##disp", ref display, 64))
                 SetDisplay(it.ItemId, display, it.UserAdded);
-            }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("留空则播报时用游戏原名");
 
@@ -351,19 +356,23 @@ public sealed class ConfigWindow
             if (allowDelete)
             {
                 ImGui.TableNextColumn();
-                if (ImGui.SmallButton($"删除##del{tableId}{it.ItemId}"))
-                {
-                    config.CustomItems.RemoveAll(x => x.ItemId == it.ItemId);
-                    config.DisabledItemIds.Remove(it.ItemId);
-                    saveConfig();
-                    onDataChanged();
-                    ImGui.EndTable();
-                    return;
-                }
+                if (ImGui.SmallButton("删除##del"))
+                    toDelete = it.ItemId;
             }
+
+            ImGui.PopID();
         }
 
         ImGui.EndTable();
+
+        // 表格画完再删，下一帧自然显示新数据
+        if (toDelete != 0)
+        {
+            config.CustomItems.RemoveAll(x => x.ItemId == toDelete);
+            config.DisabledItemIds.Remove(toDelete);
+            saveConfig();
+            onDataChanged();
+        }
     }
 
     /// <summary>取某物品当前的自定义显示名。</summary>
