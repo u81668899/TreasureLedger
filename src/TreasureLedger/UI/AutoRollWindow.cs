@@ -81,14 +81,24 @@ public sealed class AutoRollWindow
         ImGui.TextDisabled("基本设置");
         ImGui.Spacing();
 
-        var onlyDungeon = cfg.OnlyInTreasureDungeon;
-        if (ImGui.Checkbox("仅在宝库副本内生效", ref onlyDungeon))
+        var onlyCtx = cfg.OnlyInTreasureContext;
+        if (ImGui.Checkbox("仅在挖宝场景生效", ref onlyCtx))
         {
-            cfg.OnlyInTreasureDungeon = onlyDungeon;
+            cfg.OnlyInTreasureContext = onlyCtx;
             saveConfig();
         }
         ImGui.SameLine();
-        ImGui.TextDisabled("（关闭则任何副本都会投）");
+        ImGui.TextDisabled("（宝库内 + 野外打宝图怪期间）");
+
+        var window = cfg.TreasureContextMinutes;
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.SliderInt("野外判定窗口(分)", ref window, 5, 120))
+        {
+            cfg.TreasureContextMinutes = window;
+            saveConfig();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("在野外打过宝图怪之后，这段时间内仍算挖宝场景");
 
         ImGui.SetNextItemWidth(140);
         var defaultPolicy = cfg.DefaultPolicy;

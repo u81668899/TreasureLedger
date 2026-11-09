@@ -43,6 +43,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly HistoryStore history;
     private readonly RecruitTracker recruit;
     private readonly RunGains runGains = new();
+    private readonly TreasureContext treasureContext;
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
@@ -79,6 +80,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         history = new HistoryStore(log);
         recruit = new RecruitTracker(log, partyFinder);
 
+        treasureContext = new TreasureContext(log);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
 
@@ -166,6 +168,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         ledger.Reset();
         dedup.Reset();
         runGains.Clear();
+        treasureContext.Reset();
     }
 
     /// <summary>行程结束：把本趟收益写入历史。</summary>
@@ -249,8 +252,12 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
             var cfg = config.AutoRoll;
             if (!cfg.Enabled) return;
 
-            // 只在宝库副本里生效（可关）
-            if (cfg.OnlyInTreasureDungeon && tracker.CurrentDungeon is null) return;
+            // 挖宝上下文：宝库副本内 或 野外最近有挖宝活动
+            // （野外打宝图看门怪时同样会有掉落要 roll）
+            var inDungeon = tracker.CurrentDungeon is not null;
+            if (cfg.OnlyInTreasureContext
+                && !treasureContext.IsTreasureContext(inDungeon, cfg.TreasureContextMinutes))
+                return;
 
             roller.RunOnce(cfg);
         }
@@ -263,6 +270,11 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private void OnLogSeen(uint id, string text)
     {
         recruit.TryParseChat(text);
+
+        // 野外挖宝活动标记（打宝图怪、开宝图箱等）
+        if (treasureContext.TryMarkFromLog(text))
+            log.Debug("[TreasureLedger] 野外挖宝活动已标记");
+
         tracker.OnLog(id, text);
     }
 }

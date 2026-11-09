@@ -38,8 +38,19 @@ public sealed class AutoRollConfig
     /// <summary>总开关。默认关。</summary>
     public bool Enabled { get; set; } = false;
 
-    /// <summary>是否只在宝库副本里生效。</summary>
-    public bool OnlyInTreasureDungeon { get; set; } = true;
+    /// <summary>
+    /// 是否只在挖宝场景生效。
+    /// 注意：挖宝的投掷不只在宝库里出现 ——
+    /// 在野外打宝库看门怪（触发宝物库的那个怪）时也会掉东西要 roll。
+    /// 所以这里的判断是「宝库副本内 或 最近有挖宝活动」，而不是单纯的副本判断。
+    /// </summary>
+    public bool OnlyInTreasureContext { get; set; } = true;
+
+    /// <summary>
+    /// 野外挖宝活动的判定窗口。
+    /// 在野外打了宝图怪、开了宝图箱之后的一段时间内，仍算挖宝场景。
+    /// </summary>
+    public int TreasureContextMinutes { get; set; } = 30;
 
     /// <summary>名单外物品的默认策略。</summary>
     public RollPolicy DefaultPolicy { get; set; } = RollPolicy.Greed;
