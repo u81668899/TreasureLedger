@@ -8,7 +8,7 @@ using TreasureLedger.Ledger;
 namespace TreasureLedger.Report;
 
 /// <summary>
-/// 播报格式。复刻 Triggernometry XML 的输出，但按宝图分类分行。
+/// 播报格式。复刻 Triggernometry XML 的输出，按宝图分类分行。
 /// </summary>
 public static class ReportFormatter
 {
@@ -19,7 +19,6 @@ public static class ReportFormatter
         foreach (var c in config.CustomItems)
         {
             if (c.ItemId == 0) continue;
-            // 已存在的内置物品不重复添加
             if (TrackedItems.FindBuiltin(c.ItemId) is not null) continue;
             if (list.Any(x => x.ItemId == c.ItemId)) continue;
 
@@ -33,10 +32,41 @@ public static class ReportFormatter
         return list;
     }
 
-    /// <summary>
-    /// 按分类拼「本次掉落内容」。
-    /// 每个分类一行，只列数量大于 0 且未被关闭的物品。
-    /// </summary>
+    /// <summary>「金币：x　图数：x　洞数：x　底数：x」</summary>
+    public static string BuildSummaryLine(SessionLedger ledger)
+        => $"金币：{ledger.Gil:n0}　图数：{ledger.MapCount}　洞数：{ledger.VaultCount}　底数：{ledger.BottomCount}";
+
+    /// <summary>层数一行：本次行程的最深层与底数。</summary>
+    public static string BuildFloorLine(SessionLedger ledger)
+    {
+        var run = ledger.CurrentRun;
+        if (run is null) return "本次：不在宝库";
+
+        var cur = run.Current?.Floor ?? 0;
+        var max = run.MaxFloor;
+        var chests = run.TotalChests;
+
+        var s = $"本次：{run.DungeonName}　当前{cur}层／最深{max}层";
+        if (chests > 0) s += $"　开箱{chests}";
+        if (run.BottomCount > 0) s += $"　下底{run.BottomCount}";
+        return s;
+    }
+
+    /// <summary>神殿分级一行。G17-G18 用大梦/终梦命名。</summary>
+    public static string BuildShrineLine(SessionLedger ledger)
+    {
+        var high = ledger.GetShrineTier(ShrineTier.High);
+        var mid = ledger.GetShrineTier(ShrineTier.Middle);
+        var low = ledger.GetShrineTier(ShrineTier.Low);
+
+        if (high + mid + low == 0) return string.Empty;
+
+        return ledger.UsesDreamNaming
+            ? $"神殿：大梦{high}　中梦{mid}　终梦{low}"
+            : $"神殿：上级{high}　中级{mid}　下级{low}";
+    }
+
+    /// <summary>按分类拼「本次掉落内容」，每个分类一行。</summary>
     public static List<string> BuildLootLines(SessionLedger ledger, Configuration config)
     {
         var lines = new List<string>();
@@ -57,30 +87,28 @@ public static class ReportFormatter
             }
 
             if (sb.Length == 0) continue;
-
-            var body = sb.ToString().TrimEnd('　');
-            lines.Add($"{Configuration.TierName(tier)}：{body}");
+            lines.Add($"{Configuration.TierName(tier)}：{sb.ToString().TrimEnd('　')}");
         }
 
-        if (lines.Count == 0)
-            lines.Add("似乎还没有值钱的掉落物…");
-
+        if (lines.Count == 0) lines.Add("似乎还没有值钱的掉落物…");
         return lines;
     }
 
-    /// <summary>「金币：x　图数：x　洞数：x　底数：x」</summary>
-    public static string BuildSummaryLine(SessionLedger ledger)
-        => $"金币：{ledger.Gil:n0}　图数：{ledger.MapCount}　洞数：{ledger.VaultCount}　底数：{ledger.BottomCount}";
-
-    /// <summary>发送用完整内容：概要一行 + 分类若干行。</summary>
+    /// <summary>发送用完整内容。</summary>
     public static List<string> BuildFullReport(SessionLedger ledger, Configuration config)
     {
         var lines = new List<string> { BuildSummaryLine(ledger) };
-        lines.AddRange(BuildLootLines(ledger, config));
+
+        var floor = BuildFloorLine(ledger);
+        if (floor.Length > 0) lines.Add(floor);
+
+        var shrine = BuildShrineLine(ledger);
+        if (shrine.Length > 0) lines.Add(shrine);
 
         if (ledger.LastDutyName.Length > 0)
-            lines.Add("最后副本：" + ledger.LastDutyName);
+            lines.Add("当前：" + ledger.LastDutyName);
 
+        lines.AddRange(BuildLootLines(ledger, config));
         return lines;
     }
 

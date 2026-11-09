@@ -1,15 +1,20 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Plugin.Services;
 using TreasureLedger.Ledger;
 using TreasureLedger.Loot;
-using TreasureLedger.Maps;
 
 namespace TreasureLedger.Maps;
 
 /// <summary>
-/// 副本状态机：跟 TerritoryType 变化和关键 LogMessage，维护地图数/洞数/底数。
+/// 副本状态机。
+///
+/// 统计口径（按需求确认）：
+/// - 洞数：每次进入宝库 +1（等同开洞/开魔纹）
+/// - 地图数：任务开始 +1，陷阱魔物全清 +1（这两者会重叠，各算各的）
+/// - 底数：遇到下底 boss +1（boss 名唯一，不会重复）
+/// - 层数：进本记 0 层，每开一个魔纹/大门 +1
+/// - 神殿分级：G10/G12/G15 用上中下级，G17-G18 用大梦终梦
 /// </summary>
 public sealed class DungeonTracker : IDisposable
 {
@@ -39,7 +44,7 @@ public sealed class DungeonTracker : IDisposable
 
         clientState.TerritoryChanged += OnTerritoryChanged;
         CurrentTerritory = clientState.TerritoryType;
-        RefreshDungeon(CurrentTerritory);
+        CurrentDungeon = TreasureDungeons.Find(CurrentTerritory);
     }
 
     public void Dispose() => clientState.TerritoryChanged -= OnTerritoryChanged;
@@ -47,58 +52,71 @@ public sealed class DungeonTracker : IDisposable
     private void OnTerritoryChanged(uint territory)
     {
         CurrentTerritory = territory;
-        var wasIn = CurrentDungeon is not null;
-        RefreshDungeon(territory);
+        var prev = CurrentDungeon;
+        CurrentDungeon = TreasureDungeons.Find(territory);
 
         if (CurrentDungeon is not null)
         {
-            // 进入新的宝库 = 地图数 +1
-            if (!wasIn || ledger.LastDutyName != CurrentDungeon.Name)
+            // 进入宝库
+            if (prev is null || prev.Name != CurrentDungeon.Name)
             {
-                ledger.MapCount++;
-                ledger.VaultCount++;
-                ledger.LastDutyName = CurrentDungeon.Name;
-                log.Information("[TreasureLedger] 进入宝库 {Name} (TT={TT})，地图数={Map}",
-                    CurrentDungeon.Name, territory, ledger.MapCount);
+                ledger.VaultCount++;   // 洞数
+                ledger.MapCount++;     // 地图数（任务开始）
+                ledger.StartRun(CurrentDungeon.Name, territory);
+
+                log.Information("[TreasureLedger] 进入 {Name} (TT={TT})　洞数={Vault} 地图数={Map}",
+                    CurrentDungeon.Name, territory, ledger.VaultCount, ledger.MapCount);
+            }
+        }
+        else if (prev is not null)
+        {
+            // 离开宝库
+            var run = ledger.EndRun();
+            if (run is not null)
+            {
+                log.Information("[TreasureLedger] 离开 {Name}，最深 {Floor} 层",
+                    run.DungeonName, run.MaxFloor);
             }
         }
 
         StateChanged?.Invoke();
     }
 
-    private void RefreshDungeon(uint territory)
-        => CurrentDungeon = TreasureDungeons.Find(territory);
-
-    /// <summary>处理关键 LogMessage，推进状态机。</summary>
+    /// <summary>处理关键 LogMessage。</summary>
     public void OnLog(uint logId, string text)
     {
-        if (CurrentDungeon is null) return;
+        // ── 先做文本识别（有些事件共用 LogMessageId，只看 ID 分不开）──
+        if (!string.IsNullOrEmpty(text) && HandleByText(text))
+            return;
 
         switch (logId)
         {
-            case LogIds.TrapMobsCleared:
-                // 陷阱魔物全清 = 又过了一张图
-                ledger.MapCount++;
-                log.Information("[TreasureLedger] 地图数 +1 => {N}", ledger.MapCount);
+            // ── 传送魔纹出现 = 开洞，层数推进 ──
+            case LogIds.PortalAppeared:
+                if (CurrentDungeon is null) return;
+                var rec = ledger.AdvanceFloor();
+                log.Information("[TreasureLedger] 魔纹出现 → 第 {Floor} 层", rec?.Floor ?? 0);
                 StateChanged?.Invoke();
                 break;
 
-            case LogIds.PortalAppeared:
-                log.Debug("[TreasureLedger] 传送魔纹出现");
-                break;
-
+            // ── 打开了通往XX的大门 = 层数推进 ──
             case LogIds.GateOpenedA:
             case LogIds.GateOpenedB:
-                // 层数推进
-                log.Debug("[TreasureLedger] 大门打开：{Text}", text);
+                if (CurrentDungeon is null) return;
+                var g = ledger.AdvanceFloor();
+                log.Information("[TreasureLedger] 大门打开（{Text}）→ 第 {Floor} 层", text, g?.Floor ?? 0);
+                StateChanged?.Invoke();
                 break;
 
-            case LogIds.FinalAreaA:
-            case LogIds.FinalAreaB:
-                // 最终区
-                log.Debug("[TreasureLedger] 最终区：{Text}", text);
+            // ── 陷阱魔物全清 = 地图数 +1 ──
+            case LogIds.TrapMobsCleared:
+                if (CurrentDungeon is null) return;
+                ledger.MapCount++;
+                log.Information("[TreasureLedger] 陷阱魔物清空 → 地图数 {N}", ledger.MapCount);
+                StateChanged?.Invoke();
                 break;
 
+            // ── 进队重置 ──
             case LogIds.JoinedParty:
             case LogIds.JoinedPartyOf:
                 if (config.ResetOnPartyJoin)
@@ -119,11 +137,67 @@ public sealed class DungeonTracker : IDisposable
         }
     }
 
-    /// <summary>下底 boss 出现 = 底数 +1。由外部在识别到 boss 时调用。</summary>
-    public void OnBottomReached(string bossName)
+    /// <summary>按文本内容识别。返回 true 表示已处理。</summary>
+    private bool HandleByText(string text)
     {
-        ledger.BottomCount++;
-        log.Information("[TreasureLedger] 底数 +1（{Boss}） => {N}", bossName, ledger.BottomCount);
+        if (CurrentDungeon is null) return false;
+
+        // 下底 boss
+        if (TextPatterns.TryGetBottomBoss(text, out var boss))
+        {
+            OnBottomBoss(boss);
+            return true;
+        }
+
+        // 大门 / 闸区推进
+        if (TextPatterns.TryGetGate(text, out var area))
+        {
+            var rec = ledger.AdvanceFloor();
+            log.Information("[TreasureLedger] {Area} 打开 → 第 {Floor} 层", area, rec?.Floor ?? 0);
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        // 神殿召唤分级
+        if (TextPatterns.TryGetShrineTier(text, ledger.UsesDreamNaming, out var tier))
+        {
+            ledger.AddShrineTier(tier);
+            log.Debug("[TreasureLedger] 神殿召唤分级 {Tier}", tier);
+            StateChanged?.Invoke();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>下底 boss 出现。</summary>
+    public void OnBottomBoss(string bossName)
+    {
+        if (CurrentDungeon is null) return;
+        if (!TreasureDungeons.IsBottomBoss(bossName, out _)) return;
+
+        var cur = ledger.CurrentRun?.Current;
+        if (cur is null || cur.ReachedBottom) return;
+
+        ledger.MarkBottom(bossName);
+        log.Information("[TreasureLedger] 下底（{Boss}）　底数={N}", bossName, ledger.BottomCount);
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>神殿召唤，记录分级。</summary>
+    public void OnShrineSummon(ShrineTier tier)
+    {
+        if (CurrentDungeon is null) return;
+        ledger.AddShrineTier(tier);
+        log.Debug("[TreasureLedger] 神殿召唤 {Tier}", tier);
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>开了一个宝箱（卫月能直接看到）。</summary>
+    public void OnChestOpened()
+    {
+        if (CurrentDungeon is null) return;
+        ledger.AddChest();
         StateChanged?.Invoke();
     }
 }
