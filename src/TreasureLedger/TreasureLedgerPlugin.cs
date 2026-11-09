@@ -30,6 +30,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly IPartyFinderGui partyFinder;
     private readonly IFramework framework;
     private readonly IObjectTable objectTable;
+    private readonly IAddonLifecycle addonLifecycle;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -47,6 +48,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly TreasureContext treasureContext;
     private readonly VaultProbe vaultProbe;
     private readonly AutoExiter autoExiter;
+    private readonly DutyExiter dutyExiter;
+    private readonly GameCommandExecutor commandExecutor;
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
@@ -66,7 +69,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         ISigScanner sigScanner,
         IPartyFinderGui partyFinder,
         IFramework framework,
-        IObjectTable objectTable)
+        IObjectTable objectTable,
+        IAddonLifecycle addonLifecycle)
     {
         this.pluginInterface = pluginInterface;
         this.chat = chat;
@@ -78,6 +82,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         this.partyFinder = partyFinder;
         this.framework = framework;
         this.objectTable = objectTable;
+        this.addonLifecycle = addonLifecycle;
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
@@ -88,6 +93,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         treasureContext = new TreasureContext(log);
         vaultProbe = new VaultProbe(log, objectTable);
         autoExiter = new AutoExiter(log, vaultProbe, msg => sender.SendTo(ReportChannel.Echo, config, msg));
+        commandExecutor = new GameCommandExecutor(log, sigScanner);
+        dutyExiter = new DutyExiter(log, addonLifecycle, commandExecutor);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
 
@@ -132,6 +139,10 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         var ver = typeof(TreasureLedgerPlugin).Assembly.GetName().Version;
         chat.Print($"[TreasureLedger] v{ver} 已加载　输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
+        var cmdReady = commandExecutor.TryInitialize();
+
+        chat.Print($"[TreasureLedger] 原生命令执行：{(cmdReady ? "已就绪" : "未就绪")}");
+
         chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪")}　历史目录：{history.Directory_}");
         log.Information("[TreasureLedger] 加载完成 v{Ver}，投掷就绪={Ready}", ver?.ToString() ?? "?", rollReady);
     }
@@ -158,6 +169,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         tracker.Dispose();
         sender.Dispose();
         roller.Dispose();
+        dutyExiter.Dispose();
+        commandExecutor.Dispose();
         history.Dispose();
         recruit.Dispose();
         probe.Stop(chat);
@@ -268,6 +281,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
             roller.RunOnce(cfg);
 
+            // 退出等待状态推进
+            dutyExiter.Tick();
+
             // 自动退出
             var exitCfg = config.AutoExit;
             if (exitCfg.Enabled)
@@ -275,7 +291,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
                 var run = ledger.CurrentRun;
                 var hasBottom = run is not null && run.ReachedBottom;
                 if (autoExiter.Tick(exitCfg, tracker.CurrentDungeon is not null, hasBottom))
-                    commands.ProcessCommand("/退出副本");
+                    dutyExiter.RequestExit();
             }
         }
         catch (Exception ex)
