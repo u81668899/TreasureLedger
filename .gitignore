@@ -1,0 +1,27 @@
+# Windows
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS / temp
+*.tmp
+*.log
+.cache/
+.DS_Store
+
+# Dependencies (uncomment per project type as needed)
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
