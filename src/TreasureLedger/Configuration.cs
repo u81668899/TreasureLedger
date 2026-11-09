@@ -99,6 +99,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>自动退出配置。</summary>
     public Loot.AutoExitConfig AutoExit { get; set; } = new();
 
+    /// <summary>标记与标点配置。</summary>
+    public Marks.MarkConfig Marks { get; set; } = new();
+
     public bool IsItemEnabled(uint itemId) => !DisabledItemIds.Contains(itemId);
 
     public void ToggleItem(uint itemId)

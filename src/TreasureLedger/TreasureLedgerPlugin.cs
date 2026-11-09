@@ -10,6 +10,8 @@ using TreasureLedger.Items;
 using TreasureLedger.Ledger;
 using TreasureLedger.Loot;
 using TreasureLedger.Maps;
+using TreasureLedger.Marks;
+using TreasureLedger.Mobs;
 using TreasureLedger.Recruit;
 using TreasureLedger.Storage;
 using TreasureLedger.UI;
@@ -51,6 +53,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly DutyExiter dutyExiter;
     private readonly GameCommandExecutor commandExecutor;
     private readonly AddonDumper addonDumper;
+    private readonly MobTracker mobTracker;
+    private readonly MarkerService markerService;
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
@@ -59,6 +63,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly MainWindow mainWindow;
 
     private DateTime lastPrune = DateTime.Now;
+
+    /// <summary>本次进本是否已经放过神殿标点。</summary>
+    private bool shrineWaymarksPlaced;
 
     public TreasureLedgerPlugin(
         IDalamudPluginInterface pluginInterface,
@@ -96,6 +103,10 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         autoExiter = new AutoExiter(log, vaultProbe, msg => sender.SendTo(ReportChannel.Echo, config, msg));
         commandExecutor = new GameCommandExecutor(log, sigScanner);
         addonDumper = new AddonDumper(log);
+
+        mobTracker = new MobTracker(log, objectTable);
+        mobTracker.MobAppeared += OnMobAppeared;
+        markerService = new MarkerService(log);
         dutyExiter = new DutyExiter(log, sigScanner);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
@@ -107,7 +118,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         capture.LogSeen += OnLogSeen;
 
         chatCommands = new ChatCommandListener(
-            chat, log, config, ledger, sender, ResetLedger, () => recruit.Current, catalog);
+            chat, log, config, ledger, sender, ResetLedger, () => recruit.Current, catalog, () => mobTracker.Record.Summary());
 
         roller = new AutoRoller(log, sigScanner);
         var rollReady = roller.Probe(config.AutoRoll.CustomSignature);
@@ -127,6 +138,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         mainWindow.Add("配置", configWindow);
         mainWindow.Add("自动投掷", autoRollWindow);
+        mainWindow.Add("小怪与标记", new MobWindow(config, mobTracker, markerService, SaveConfig));
         mainWindow.Add("调试", new DebugWindow(addonDumper, commandExecutor, dutyExiter));
         mainWindow.Add("长期统计", historyWindow);
 
@@ -163,6 +175,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         OnRunEnded();
 
         framework.Update -= OnFrameworkUpdate;
+        mobTracker.MobAppeared -= OnMobAppeared;
+        mobTracker.Dispose();
 
         capture.LootReceived -= OnLoot;
         capture.RollNotified -= OnRollNotified;
@@ -194,6 +208,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         dedup.Reset();
         runGains.Clear();
         treasureContext.Reset();
+        mobTracker.Reset();
     }
 
     /// <summary>行程结束：把本趟收益写入历史。</summary>
@@ -263,6 +278,60 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         }
     }
 
+    /// <summary>金币怪标记槽轮转计数。</summary>
+    private int treasureMarkCursor;
+
+    /// <summary>小怪出现 → 按配置打本地标记。</summary>
+    /// <summary>进神殿时自动放十字四点。</summary>
+    private void TickShrineWaymarks()
+    {
+        var dg = tracker.CurrentDungeon;
+        if (dg is null)
+        {
+            shrineWaymarksPlaced = false;
+            return;
+        }
+
+        if (shrineWaymarksPlaced) return;
+        if (!config.Marks.EnableShrineWaymarks) return;
+
+        var points = ShrineWaymarks.ForDungeon(dg.Name);
+        if (points is null) return;
+
+        markerService.PlaceFieldMarkers(points);
+        shrineWaymarksPlaced = true;
+        log.Information("[TreasureLedger] 已为 {Name} 放置神殿标点", dg.Name);
+    }
+
+    private void OnMobAppeared(MobDefinition def, ulong gameObjectId)
+    {
+        try
+        {
+            if (gameObjectId == 0) return;
+
+            switch (def.Category)
+            {
+                case MobCategory.Order:
+                    if (!config.Marks.EnableOrderMarks) return;
+                    // 顺序怪用固定槽位：洋葱=1 茄子=2 蒜头=3 番茄=4 王后=5
+                    if (def.MarkSlot is >= 1 and <= 5)
+                        markerService.MarkObject(gameObjectId, (ObjectMark)(def.MarkSlot - 1));
+                    break;
+
+                case MobCategory.Treasure:
+                    if (!config.Marks.EnableTreasureMarks) return;
+                    // 金币怪按出现顺序轮转 attack1-5
+                    markerService.MarkObject(gameObjectId, (ObjectMark)(treasureMarkCursor % 5));
+                    treasureMarkCursor = (treasureMarkCursor + 1) % 5;
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Debug("[TreasureLedger] 自动标记失败：{Msg}", ex.Message);
+        }
+    }
+
     private void OnGil(long amount)
     {
         ledger.Gil += amount;
@@ -274,6 +343,12 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     {
         try
         {
+            // 小怪扫描与标记（不受自动投掷开关影响）
+            mobTracker.Tick();
+
+            // 进神殿自动放标点（每趟只放一次）
+            TickShrineWaymarks();
+
             var cfg = config.AutoRoll;
             if (!cfg.Enabled) return;
 

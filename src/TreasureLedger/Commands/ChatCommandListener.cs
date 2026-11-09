@@ -38,6 +38,7 @@ public sealed class ChatCommandListener : IDisposable
     private readonly Action resetLedger;
     private readonly Func<string> recruitProvider;
     private readonly ItemCatalog? catalog;
+    private readonly Func<string>? mobSummaryProvider;
 
     public ChatCommandListener(
         IChatGui chat,
@@ -47,7 +48,8 @@ public sealed class ChatCommandListener : IDisposable
         ChatSender sender,
         Action resetLedger,
         Func<string> recruitProvider,
-        ItemCatalog? catalog = null)
+        ItemCatalog? catalog = null,
+        Func<string>? mobSummaryProvider = null)
     {
         this.chat = chat;
         this.log = log;
@@ -57,6 +59,7 @@ public sealed class ChatCommandListener : IDisposable
         this.resetLedger = resetLedger;
         this.recruitProvider = recruitProvider;
         this.catalog = catalog;
+        this.mobSummaryProvider = mobSummaryProvider;
 
         chat.ChatMessage += OnChatMessage;
     }
@@ -165,7 +168,7 @@ public sealed class ChatCommandListener : IDisposable
 
     public void SendReport(ReportChannel channel)
     {
-        foreach (var line in ReportFormatter.BuildFullReport(ledger, config, recruitProvider(), catalog))
+        foreach (var line in ReportFormatter.BuildFullReport(ledger, config, recruitProvider(), catalog, mobSummaryProvider?.Invoke()))
             sender.SendTo(channel, config, line, LastTellSender);
     }
 

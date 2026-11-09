@@ -88,6 +88,9 @@ public sealed class MainWindow : Window
                 case DebugWindow d:
                     d.Draw();
                     break;
+                case MobWindow m:
+                    m.Draw();
+                    break;
                 default:
                     ImGui.TextDisabled("（未实现）");
                     break;

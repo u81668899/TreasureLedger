@@ -131,7 +131,7 @@ public static class ReportFormatter
     }
 
     /// <summary>发送用完整内容。</summary>
-    public static List<string> BuildFullReport(SessionLedger ledger, Configuration config, string recruitText = "", ItemCatalog? catalog = null)
+    public static List<string> BuildFullReport(SessionLedger ledger, Configuration config, string recruitText = "", ItemCatalog? catalog = null, string? mobSummary = null)
     {
         var lines = new List<string> { BuildSummaryLine(ledger) };
 
@@ -146,6 +146,9 @@ public static class ReportFormatter
 
         if (!string.IsNullOrWhiteSpace(recruitText))
             lines.Add("招募：《" + recruitText.Trim() + "》");
+
+        if (!string.IsNullOrWhiteSpace(mobSummary))
+            lines.Add(mobSummary);
 
         lines.AddRange(BuildLootLines(ledger, config, catalog));
         return lines;
