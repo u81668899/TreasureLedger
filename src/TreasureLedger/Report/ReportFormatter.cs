@@ -86,32 +86,48 @@ public static class ReportFormatter
             : $"神殿：上级{high}　中级{mid}　下级{low}";
     }
 
-    /// <summary>按分类拼「本次掉落内容」，每个分类一行。</summary>
+    /// <summary>按分类拼「本次掉落内容」，每个分类一行。自己添加的单独一行。</summary>
     public static List<string> BuildLootLines(SessionLedger ledger, Configuration config, ItemCatalog? catalog = null)
     {
         var lines = new List<string>();
         var items = EffectiveItems(config, catalog);
 
+        // 内置物品：按宝图分类
         foreach (var tier in Enum.GetValues<MapTier>())
         {
-            var bucket = items.Where(x => x.Tier == tier).ToList();
+            var bucket = items.Where(x => !x.UserAdded && x.Tier == tier).ToList();
             if (bucket.Count == 0) continue;
 
-            var sb = new StringBuilder();
-            foreach (var it in bucket)
-            {
-                if (!config.IsItemEnabled(it.ItemId)) continue;
-                var n = ledger.GetCount(it.ItemId);
-                if (n <= 0) continue;
-                sb.Append(it.ReportName).Append('×').Append(n).Append('　');
-            }
+            var body = JoinItems(bucket, ledger, config);
+            if (body.Length == 0) continue;
 
-            if (sb.Length == 0) continue;
-            lines.Add($"{Configuration.TierName(tier)}：{sb.ToString().TrimEnd('　')}");
+            lines.Add($"{Configuration.TierName(tier)}：{body}");
+        }
+
+        // 自己添加的：单独一行
+        var customs = items.Where(x => x.UserAdded).ToList();
+        if (customs.Count > 0)
+        {
+            var body = JoinItems(customs, ledger, config);
+            if (body.Length > 0) lines.Add($"自己添加：{body}");
         }
 
         if (lines.Count == 0) lines.Add("似乎还没有值钱的掉落物…");
         return lines;
+    }
+
+    /// <summary>把一组物品拼成「名字×数量　名字×数量」。</summary>
+    private static string JoinItems(List<TrackedItem> bucket, SessionLedger ledger, Configuration config)
+    {
+        var sb = new StringBuilder();
+        foreach (var it in bucket)
+        {
+            if (!config.IsItemEnabled(it.ItemId)) continue;
+            var n = ledger.GetCount(it.ItemId);
+            if (n <= 0) continue;
+            sb.Append(it.ReportName).Append('×').Append(n).Append('　');
+        }
+        return sb.ToString().TrimEnd('　');
     }
 
     /// <summary>发送用完整内容。</summary>

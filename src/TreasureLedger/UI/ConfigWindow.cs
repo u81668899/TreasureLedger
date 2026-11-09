@@ -27,7 +27,6 @@ public sealed class ConfigWindow
     // 添加自定义物品的输入缓冲
     private string newItemId = string.Empty;
     private string newItemName = string.Empty;
-    private int newItemTier = 5;
 
     // 解析后的物品（名字或 ID 输入都会归一到这两个字段）
     private uint resolvedItemId;
@@ -278,14 +277,9 @@ public sealed class ConfigWindow
         ImGui.SetNextItemWidth(220);
         ImGui.InputText("统计显示名（留空=用游戏原名）", ref newItemName, 64);
 
-        var tiers = Enum.GetValues<MapTier>();
-        var tierNames = tiers.Select(Configuration.TierName).ToArray();
-        ImGui.SetNextItemWidth(140);
-        ImGui.Combo("分类", ref newItemTier, tierNames, tierNames.Length);
-
         if (ImGui.Button("添加"))
         {
-            AddResolvedItem(tiers);
+            AddResolvedItem();
         }
 
         ImGui.SameLine();
@@ -449,7 +443,7 @@ public sealed class ConfigWindow
         }
     }
 
-    private void AddResolvedItem(MapTier[] tiers)
+    private void AddResolvedItem()
     {
         if (resolvedItemId == 0)
             ResolveItemInput();
@@ -462,7 +456,7 @@ public sealed class ConfigWindow
         {
             ItemId = resolvedItemId,
             Display = newItemName.Trim(),   // 留空则播报时回退到游戏原名
-            Tier = tiers[Math.Clamp(newItemTier, 0, tiers.Length - 1)],
+            Tier = MapTier.G17G18,          // 自己添加的统一归「自己添加」组，不用分类
             UserAdded = true,
         });
 
