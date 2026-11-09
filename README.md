@@ -121,6 +121,21 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 这是 ACT 做不到的，也是自动退出功能的基础。
 
+### 退出副本
+
+调用 FFXIVClientStructs 的 `GameMain.ExecuteCommand(819, ...)`，
+819 = `ExecuteCommandFlag.LeaveDuty`。这一行就能退本，不需要打开任何 UI。
+
+实现思路来自 DailyRoutines 的 `LeaveDutyCommand`，但**不依赖该插件** ——
+最终落点是 Dalamud 自带的 FFXIVClientStructs。
+
+**维护与容错**：该函数由 CS 通过特征码
+`E8 ?? ?? ?? ?? 66 41 89 B7 ?? ?? ?? ?? ?? ?? ??` 定位。
+游戏大版本更新而 CS 尚未跟随时，特征码会失配、地址归零，直接调用会崩溃。
+所以插件启动时会用同一特征码做**预检**：
+- 预检通过 → 允许调用
+- 预检失败 → 禁用退本功能并在 UI 提示，绝不冒险调用
+
 ### 自动投掷
 
 参考 [LazyLoot](https://github.com/NiGuangOwO/LazyLoot)（MIT）的反编译实现：
@@ -139,6 +154,7 @@ delegate bool RollItemRaw(Loot* loot, RollChoice option, uint index);
 - **自动投掷会真的操作游戏**，请先在安全场景（比如野外小怪）测试，确认行为正常再用到宝库
 - 自动投掷**默认关闭**，关闭时不执行任何写操作
 - 关键判定依赖游戏版本的特征码与结构偏移，**游戏大版本更新后可能需要跟进调整**
+- 插件已在退本与自动投掷处加入特征码预检：解析失败只会禁用对应功能，不会导致游戏崩溃
 
 ---
 

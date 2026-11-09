@@ -96,7 +96,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         autoExiter = new AutoExiter(log, vaultProbe, msg => sender.SendTo(ReportChannel.Echo, config, msg));
         commandExecutor = new GameCommandExecutor(log, sigScanner);
         addonDumper = new AddonDumper(log);
-        dutyExiter = new DutyExiter(log);
+        dutyExiter = new DutyExiter(log, sigScanner);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
 
