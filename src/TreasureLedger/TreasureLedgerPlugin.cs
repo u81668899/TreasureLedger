@@ -82,7 +82,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         probe = new LogProbe(log);
         if (config.EnableLogProbe) probe.Start(chat);
 
-        chat.Print($"[TreasureLedger] 已加载　输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
+        chat.Print($"[TreasureLedger] v{typeof(TreasureLedgerPlugin).Assembly.GetName().Version} 已加载　输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
         log.Information("[TreasureLedger] 加载完成");
     }
 
