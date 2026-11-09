@@ -19,6 +19,7 @@ public sealed class ConfigWindow : Window
     private readonly Action saveConfig;
     private readonly Action resetLedger;
     private readonly Action<string> sendToChat;
+    private readonly Action<bool> setPreview;
 
     // 添加自定义物品的输入缓冲
     private string newItemId = string.Empty;
@@ -32,7 +33,8 @@ public sealed class ConfigWindow : Window
         ItemCatalog catalog,
         Action saveConfig,
         Action resetLedger,
-        Action<string> sendToChat)
+        Action<string> sendToChat,
+        Action<bool> setPreview)
         : base("Treasure Ledger###tl-config")
     {
         this.config = config;
@@ -42,6 +44,7 @@ public sealed class ConfigWindow : Window
         this.saveConfig = saveConfig;
         this.resetLedger = resetLedger;
         this.sendToChat = sendToChat;
+        this.setPreview = setPreview;
 
         SizeConstraints = new WindowSizeConstraints
         {
@@ -113,6 +116,30 @@ public sealed class ConfigWindow : Window
         {
             config.PrintLootLocally = print;
             saveConfig();
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextDisabled("频道发送");
+
+        var preview = config.ChannelPreviewOnly;
+        if (ImGui.Checkbox("仅本地预览（不真的发到频道）", ref preview))
+        {
+            config.ChannelPreviewOnly = preview;
+            setPreview(preview);
+            saveConfig();
+        }
+
+        if (config.ChannelPreviewOnly)
+        {
+            ImGui.TextDisabled("输出只显示在你自己的聊天栏，前缀标明目标频道。");
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.7f, 0.3f, 1f));
+            ImGui.TextWrapped("⚠ 已启用真实频道发送。走的是 Dalamud 官方 Print(XivChatEntry)，" +
+                              "但请先在安全场景测试一次，确认稳定再用于挖宝。");
+            ImGui.PopStyleColor();
         }
     }
 
