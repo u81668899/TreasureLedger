@@ -82,6 +82,9 @@ public sealed class MainWindow : Window
                 case ConfigWindow c:
                     c.DrawBody();
                     break;
+                case AutoRollWindow a:
+                    a.Draw();
+                    break;
                 default:
                     ImGui.TextDisabled("（未实现）");
                     break;

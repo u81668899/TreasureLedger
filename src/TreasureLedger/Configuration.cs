@@ -93,6 +93,9 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     public bool ChannelPreviewOnly { get; set; } = false;
 
+    /// <summary>自动投掷配置。</summary>
+    public Loot.AutoRollConfig AutoRoll { get; set; } = new();
+
     public bool IsItemEnabled(uint itemId) => !DisabledItemIds.Contains(itemId);
 
     public void ToggleItem(uint itemId)

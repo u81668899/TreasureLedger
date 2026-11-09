@@ -28,6 +28,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly IClientState clientState;
     private readonly ISigScanner sigScanner;
     private readonly IPartyFinderGui partyFinder;
+    private readonly IFramework framework;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -46,6 +47,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
     private readonly HistoryWindow historyWindow;
+    private readonly AutoRollWindow autoRollWindow;
     private readonly MainWindow mainWindow;
 
     private DateTime lastPrune = DateTime.Now;
@@ -58,7 +60,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         ICommandManager commands,
         IClientState clientState,
         ISigScanner sigScanner,
-        IPartyFinderGui partyFinder)
+        IPartyFinderGui partyFinder,
+        IFramework framework)
     {
         this.pluginInterface = pluginInterface;
         this.chat = chat;
@@ -68,6 +71,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         this.clientState = clientState;
         this.sigScanner = sigScanner;
         this.partyFinder = partyFinder;
+        this.framework = framework;
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
@@ -100,13 +104,19 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
             () => recruit.Current,
             t => recruit.Set(t));
 
+        autoRollWindow = new AutoRollWindow(
+            config, roller, catalog, SaveConfig, () => historyWindow.Invalidate());
+
         mainWindow.Add("配置", configWindow);
+        mainWindow.Add("自动投掷", autoRollWindow);
         mainWindow.Add("长期统计", historyWindow);
 
         windowSystem.AddWindow(mainWindow);
         pluginInterface.UiBuilder.Draw += windowSystem.Draw;
         pluginInterface.UiBuilder.OpenConfigUi += ToggleMain;
         pluginInterface.UiBuilder.OpenMainUi += ToggleMain;
+
+        framework.Update += OnFrameworkUpdate;
 
         probe = new LogProbe(log);
         if (config.EnableLogProbe) probe.Start(chat);
@@ -126,6 +136,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         // 未结束的行程也要落盘
         OnRunEnded();
+
+        framework.Update -= OnFrameworkUpdate;
 
         capture.LootReceived -= OnLoot;
         capture.RollNotified -= OnRollNotified;
@@ -227,6 +239,25 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     {
         ledger.Gil += amount;
         runGains.Gil += amount;
+    }
+
+    /// <summary>每帧检查是否需要自动投掷。</summary>
+    private void OnFrameworkUpdate(IFramework fw)
+    {
+        try
+        {
+            var cfg = config.AutoRoll;
+            if (!cfg.Enabled) return;
+
+            // 只在宝库副本里生效（可关）
+            if (cfg.OnlyInTreasureDungeon && tracker.CurrentDungeon is null) return;
+
+            roller.RunOnce(cfg);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "[TreasureLedger] 自动投掷循环异常");
+        }
     }
 
     private void OnLogSeen(uint id, string text)

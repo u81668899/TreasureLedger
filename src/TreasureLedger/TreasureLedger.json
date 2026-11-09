@@ -4,7 +4,7 @@
   "Punchline": "宝物库挖宝的账本与掉落统计",
   "Description": "按宝图分类统计掉落，支持小怪/宝箱/投掷三种来源去重，可自定义查询与重置指令，支持跨服贝/本服贝/小队/默语多频道播报。",
   "InternalName": "TreasureLedger",
-  "AssemblyVersion": "0.1.0.42",
+  "AssemblyVersion": "0.1.0.47",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/u81668899/TreasureLedger",
   "Tags": ["treasure","loot","ledger","宝物库","挖宝"],

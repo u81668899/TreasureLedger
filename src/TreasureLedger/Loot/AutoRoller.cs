@@ -1,5 +1,5 @@
 using System;
-using System.Linq;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
@@ -13,20 +13,34 @@ public enum RollChoice : int
     Pass = 0,
     Need = 1,
     Greed = 2,
+
+    /// <summary>游戏内部用 5 表示「已放弃/无需投掷」的结果位。</summary>
+    AlreadyPassed = 5,
 }
+
+/// <summary>一条可投掷的条目。</summary>
+public readonly record struct RollableItem(
+    uint Index,
+    uint ItemId,
+    int Count,
+    byte RollValue,
+    RollState State,
+    RollResult Result);
 
 /// <summary>
 /// 自动投掷。
 ///
-/// 实现参考 LazyLoot（NiGuangOwO/LazyLoot，MIT）：
+/// 实现参考 LazyLoot（NiGuangOwO/LazyLoot，MIT）的反编译结果：
 ///   delegate bool RollItemRaw(Loot* loot, RollResult option, uint index);
-///   通过特征码扫描定位游戏内的投掷函数：
-///     "41 83 F8 ?? 0F 83 ?? ?? ?? ?? 48 89 5C 24 08"
-///   然后 RollItemRaw(Loot.Instance(), option, index)。
+///   特征码 "41 83 F8 ?? 0F 83 ?? ?? ?? ?? 48 89 5C 24 08"
+///   调用 RollItemRaw(Loot.Instance(), option, index)
 ///
-/// LootItem 字段（CS 7.57）：
-///   ChestObjectId off=0, ItemId off=8, ItemCount off=12,
-///   RollState off=32, RollResult off=36, RollValue off=40, LootMode off=56
+/// 可投掷判定（照抄 LazyLoot 的过滤条件）：
+///   ChestObjectId == 0 或 0xE0000000 → 不是宝箱来源，跳过
+///   RollResult != 0                  → 已经投过或已分配，跳过
+///   RollState 为 17 / 21 / 28        → 状态不可投，跳过
+///   LootMode 为 2 / 3                → 模式排除，跳过
+///   ItemId == 0                      → 空槽，跳过
 /// </summary>
 public sealed unsafe class AutoRoller : IDisposable
 {
@@ -39,18 +53,33 @@ public sealed unsafe class AutoRoller : IDisposable
 
     private RollItemRaw? rollItemRaw;
 
+    /// <summary>上次投掷的时间，用于控制间隔。</summary>
+    private DateTime lastRoll = DateTime.MinValue;
+
+    /// <summary>投过但游戏还没反馈的物品，避免重复投。</summary>
+    private readonly HashSet<(uint Index, uint ItemId)> issued = new();
+
     public AutoRoller(IPluginLog log, ISigScanner sigScanner)
     {
         this.log = log;
         this.sigScanner = sigScanner;
     }
 
-    public void Dispose() => rollItemRaw = null;
+    public void Dispose()
+    {
+        rollItemRaw = null;
+        issued.Clear();
+    }
 
-    /// <summary>投掷函数是否已定位成功。</summary>
+    /// <summary>投掷函数是否已定位。</summary>
     public bool Ready => rollItemRaw is not null;
 
-    /// <summary>尝试定位投掷函数。失败不抛异常。</summary>
+    /// <summary>累计投掷次数（统计用）。</summary>
+    public int RolledCount { get; private set; }
+
+    /// <summary>最近一次投掷描述。</summary>
+    public string LastAction { get; private set; } = string.Empty;
+
     public bool TryInitialize()
     {
         if (rollItemRaw is not null) return true;
@@ -60,7 +89,7 @@ public sealed unsafe class AutoRoller : IDisposable
             var addr = sigScanner.ScanText(RollSignature);
             if (addr == IntPtr.Zero)
             {
-                log.Warning("[TreasureLedger] 未找到投掷函数特征码，自动投掷不可用");
+                log.Warning("[TreasureLedger] 未找到投掷函数特征码");
                 return false;
             }
 
@@ -76,10 +105,10 @@ public sealed unsafe class AutoRoller : IDisposable
         }
     }
 
-    /// <summary>枚举当前可投掷的物品。</summary>
-    public List<(uint Index, uint ItemId, int Count, RollState State, RollResult Result)> EnumerateRollable()
+    /// <summary>枚举当前所有真正可投掷的条目。</summary>
+    public List<RollableItem> EnumerateRollable()
     {
-        var list = new List<(uint, uint, int, RollState, RollResult)>();
+        var list = new List<RollableItem>(16);
 
         var loot = LootStruct.Instance();
         if (loot is null) return list;
@@ -88,22 +117,95 @@ public sealed unsafe class AutoRoller : IDisposable
         for (var i = 0; i < items.Length; i++)
         {
             var it = items[i];
-            if (it.ItemId == 0) continue;
 
-            // ChestObjectId 为 0 或 0xE0000000 表示不是宝箱来源
+            // 不是宝箱来源
             var chestId = it.ChestObjectId;
             if (chestId is 0 or 3758096384u) continue;
 
-            list.Add(((uint)i, it.ItemId, (int)it.ItemCount, it.RollState, it.RollResult));
+            // 已投过 / 已分配
+            if (it.RollResult != 0) continue;
+
+            // 状态不可投：17/21/28
+            var state = (int)it.RollState;
+            if (state is 17 or 21 or 28) continue;
+
+            // 模式排除：2/3
+            var mode = (int)it.LootMode;
+            if (mode is 2 or 3) continue;
+
+            // 空槽
+            if (it.ItemId == 0) continue;
+
+            list.Add(new RollableItem(
+                (uint)i,
+                it.ItemId,
+                it.ItemCount,
+                it.RollValue,
+                it.RollState,
+                it.RollResult));
         }
 
         return list;
     }
 
     /// <summary>
-    /// 对指定索引投掷。
+    /// 执行一轮自动投掷。
+    /// 返回本次投出去的条数。
     /// </summary>
-    public bool Roll(uint index, RollChoice choice)
+    /// <param name="config">投掷配置。</param>
+    /// <param name="canRoll">外部条件（比如是否在宝库），返回 false 就不投。</param>
+    public int RunOnce(AutoRollConfig config, Func<bool>? canRoll = null)
+    {
+        if (!config.Enabled) return 0;
+        if (canRoll is not null && !canRoll()) return 0;
+
+        // 间隔控制
+        if ((DateTime.Now - lastRoll).TotalMilliseconds < config.IntervalMs) return 0;
+
+        if (!TryInitialize()) return 0;
+
+        var visited = 0;
+        foreach (var item in EnumerateRollable())
+        {
+            // 已经投过、游戏还没反馈，跳过
+            if (issued.Contains((item.Index, item.ItemId))) continue;
+
+            var policy = config.ResolvePolicy(item.ItemId);
+            var choice = policy switch
+            {
+                RollPolicy.Need => RollChoice.Need,
+                RollPolicy.Greed => RollChoice.Greed,
+                RollPolicy.Pass => RollChoice.Pass,
+                _ => RollChoice.Greed,
+            };
+
+            if (DoRoll(item.Index, choice))
+            {
+                issued.Add((item.Index, item.ItemId));
+                visited++;
+                RolledCount++;
+                LastAction = $"#{item.ItemId}×{item.Count} → {choice}";
+                lastRoll = DateTime.Now;
+
+                // 一次只投一个，让游戏有时间反应
+                break;
+            }
+        }
+
+        // 清掉已经不在可投列表里的记录，避免无限增长
+        if (issued.Count > 64)
+        {
+            var still = new HashSet<(uint, uint)>();
+            foreach (var r in EnumerateRollable())
+                still.Add((r.Index, r.ItemId));
+            issued.IntersectWith(still);
+        }
+
+        return visited;
+    }
+
+    /// <summary>底层投掷调用。</summary>
+    private bool DoRoll(uint index, RollChoice choice)
     {
         if (!TryInitialize()) return false;
 
@@ -113,6 +215,7 @@ public sealed unsafe class AutoRoller : IDisposable
             if (loot is null) return false;
 
             rollItemRaw!(loot, choice, index);
+            log.Debug("[TreasureLedger] 投掷 index={Index} choice={Choice}", index, choice);
             return true;
         }
         catch (Exception ex)
@@ -120,5 +223,13 @@ public sealed unsafe class AutoRoller : IDisposable
             log.Error(ex, "[TreasureLedger] 投掷失败 index={Index}", index);
             return false;
         }
+    }
+
+    /// <summary>清空记录（重置统计时用）。</summary>
+    public void Reset()
+    {
+        issued.Clear();
+        RolledCount = 0;
+        LastAction = string.Empty;
     }
 }
