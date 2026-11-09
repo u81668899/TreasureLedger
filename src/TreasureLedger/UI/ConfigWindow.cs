@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using TreasureLedger.Commands;
 using TreasureLedger.Items;
 using TreasureLedger.Ledger;
 using TreasureLedger.Maps;
@@ -93,19 +94,13 @@ public sealed class ConfigWindow
         ImGui.TextDisabled("在聊天栏直接输入这些指令即可触发。哪个频道发的，就回哪个频道。");
         ImGui.Spacing();
 
-        var q = config.QueryCommand;
-        if (ImGui.InputText("查询指令", ref q, 64))
-        {
-            config.QueryCommand = q;
-            saveConfig();
-        }
+        DrawCommandRow("查询指令", "##q",
+            config.QueryCommand, v => config.QueryCommand = v,
+            config.QueryCommandIsRegex, v => config.QueryCommandIsRegex = v);
 
-        var r = config.ResetCommand;
-        if (ImGui.InputText("重置指令", ref r, 64))
-        {
-            config.ResetCommand = r;
-            saveConfig();
-        }
+        DrawCommandRow("重置指令", "##r",
+            config.ResetCommand, v => config.ResetCommand = v,
+            config.ResetCommandIsRegex, v => config.ResetCommandIsRegex = v);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -164,6 +159,64 @@ public sealed class ConfigWindow
         }
     }
 
+    /// <summary>
+    /// 指令输入行：输入框 + 正则开关 + 校验底色。
+    /// 正则合法时输入框底色绿色，非法时红色。
+    /// </summary>
+    private void DrawCommandRow(
+        string label,
+        string idSuffix,
+        string value,
+        Action<string> setValue,
+        bool isRegex,
+        Action<bool> setRegex)
+    {
+        // 正则开关放在左侧
+        var regex = isRegex;
+        if (ImGui.Checkbox("正则" + idSuffix, ref regex))
+        {
+            setRegex(regex);
+            saveConfig();
+        }
+        ImGui.SameLine();
+
+        var state = ChatCommandListener.CheckPattern(value, isRegex);
+
+        // 根据校验结果选底色
+        var hasColor = false;
+        if (state == CommandMatchState.Invalid)
+        {
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.55f, 0.15f, 0.15f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.65f, 0.20f, 0.20f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.75f, 0.25f, 0.25f, 1f));
+            hasColor = true;
+        }
+        else if (state == CommandMatchState.Valid && isRegex)
+        {
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.15f, 0.45f, 0.20f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.20f, 0.55f, 0.25f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.25f, 0.65f, 0.30f, 1f));
+            hasColor = true;
+        }
+
+        ImGui.SetNextItemWidth(240);
+        var buf = value;
+        if (ImGui.InputText(label + idSuffix, ref buf, 128))
+        {
+            setValue(buf);
+            saveConfig();
+        }
+
+        if (hasColor) ImGui.PopStyleColor(3);
+
+        // 非法时补一句说明
+        if (state == CommandMatchState.Invalid)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "正则语法错误");
+        }
+    }
+
     private void DrawChannels()
     {
         ImGui.TextDisabled("勾选允许响应查询的频道。默认只有默语。");
@@ -193,6 +246,17 @@ public sealed class ConfigWindow
         if (ImGui.SliderInt("跨服贝序号", ref cl, 1, 8))
         {
             config.CrossLinkshellIndex = cl;
+            saveConfig();
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("悄悄话回给谁：留空则自动回给最近发消息给你的人");
+
+        var tell = config.TellTargetName;
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.InputText("悄悄话对象", ref tell, 32))
+        {
+            config.TellTargetName = tell;
             saveConfig();
         }
     }

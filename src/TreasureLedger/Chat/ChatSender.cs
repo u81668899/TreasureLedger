@@ -65,7 +65,8 @@ public sealed class ChatSender : IDisposable
     /// 发到指定频道。
     /// 预览模式下只本地回显并加频道前缀。
     /// </summary>
-    public bool SendTo(ReportChannel channel, Configuration config, string text)
+    /// <param name="tellTarget">悄悄话的收件人名，只在 Tell 频道用到。</param>
+    public bool SendTo(ReportChannel channel, Configuration config, string text, string? tellTarget = null)
     {
         if (string.IsNullOrEmpty(text)) return false;
 
@@ -77,7 +78,7 @@ public sealed class ChatSender : IDisposable
             return true;
         }
 
-        return Send(kind, text, displayName: Configuration.ChannelName(channel));
+        return Send(kind, text, tellTarget: tellTarget);
     }
 
     /// <summary>
@@ -88,12 +89,19 @@ public sealed class ChatSender : IDisposable
     ///     HandlePrintMessageDetour(..., new LogInfo { LogKind = (ushort)targetChannel }, ...)
     /// 所以只要 Type 不为 null，频道就由我们决定，不会走「通用聊天类型」。
     ///
-    /// 注意：不要用 chat.Print(string) —— 源码里它固定使用
-    /// configuration.GeneralChatType，跟当前标签页无关，会永远跑到同一个频道。
+    /// 悄悄话需要 Name 填收件人名（游戏用它决定发给谁）。
     /// </summary>
-    public bool Send(XivChatType kind, string text, string? displayName = null)
+    public bool Send(XivChatType kind, string text, string? displayName = null, string? tellTarget = null)
     {
         if (string.IsNullOrEmpty(text)) return false;
+
+        // 悄悄话必须有收件人，否则不发，避免变成谁都能看到的广播
+        if (kind is XivChatType.TellOutgoing or XivChatType.TellIncoming
+            && string.IsNullOrWhiteSpace(tellTarget))
+        {
+            log.Warning("[TreasureLedger] 悄悄话缺少收件人，已跳过");
+            return false;
+        }
 
         try
         {
@@ -101,7 +109,7 @@ public sealed class ChatSender : IDisposable
             {
                 Type = kind,
                 Message = text,
-                Name = string.Empty,
+                Name = tellTarget ?? string.Empty,
                 Silent = false,
                 Timestamp = Environment.TickCount,
             };
@@ -122,6 +130,7 @@ public sealed class ChatSender : IDisposable
         ReportChannel.Party => XivChatType.Party,
         ReportChannel.LinkshellLocal => LocalLsType(config.LocalLinkshellIndex),
         ReportChannel.CrossWorldLinkshell => CrossLsType(config.CrossLinkshellIndex),
+        ReportChannel.Tell => XivChatType.TellOutgoing,
         _ => XivChatType.Echo,
     };
 

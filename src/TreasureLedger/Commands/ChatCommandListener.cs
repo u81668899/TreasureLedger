@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
 using Dalamud.Plugin.Services;
@@ -9,9 +10,23 @@ using TreasureLedger.Report;
 
 namespace TreasureLedger.Commands;
 
+/// <summary>指令匹配结果，用于 UI 显示底色。</summary>
+public enum CommandMatchState
+{
+    /// <summary>空</summary>
+    Empty,
+
+    /// <summary>正则语法错误</summary>
+    Invalid,
+
+    /// <summary>合法</summary>
+    Valid,
+}
+
 /// <summary>
 /// 聊天指令监听：从聊天频道里的文本识别自定义指令。
 /// 谁在哪个频道发，就往哪个频道回。
+/// 支持纯文本匹配和正则匹配两种模式。
 /// </summary>
 public sealed class ChatCommandListener : IDisposable
 {
@@ -48,6 +63,9 @@ public sealed class ChatCommandListener : IDisposable
 
     public void Dispose() => chat.ChatMessage -= OnChatMessage;
 
+    /// <summary>悄悄话回给谁：最近一次发消息给我们的人。</summary>
+    public string LastTellSender { get; private set; } = string.Empty;
+
     private void OnChatMessage(IHandleableChatMessage message)
     {
         try
@@ -60,12 +78,20 @@ public sealed class ChatCommandListener : IDisposable
             var text = message.Message.TextValue?.Trim();
             if (string.IsNullOrEmpty(text)) return;
 
-            if (Matches(text!, config.QueryCommand))
+            // 悄悄话：记住是谁发的，回消息要用
+            if (channel.Value == ReportChannel.Tell)
+            {
+                var name = message.Sender.TextValue;
+                if (!string.IsNullOrWhiteSpace(name))
+                    LastTellSender = name!.Trim();
+            }
+
+            if (Matches(text!, config.QueryCommand, config.QueryCommandIsRegex))
             {
                 log.Information("[TreasureLedger] 查询请求（{Ch}）", Configuration.ChannelName(channel.Value));
                 SendReport(channel.Value);
             }
-            else if (Matches(text!, config.ResetCommand))
+            else if (Matches(text!, config.ResetCommand, config.ResetCommandIsRegex))
             {
                 resetLedger();
                 SendLine(channel.Value, "已重置本次挖宝统计。");
@@ -78,16 +104,51 @@ public sealed class ChatCommandListener : IDisposable
         }
     }
 
-    private static bool Matches(string text, string command)
+    /// <summary>按配置决定纯文本还是正则匹配。</summary>
+    private static bool Matches(string text, string command, bool useRegex)
     {
         if (string.IsNullOrWhiteSpace(command)) return false;
-        return string.Equals(text.Trim(), command.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        var input = text.Trim();
+        var pattern = command.Trim();
+
+        if (!useRegex)
+            return string.Equals(input, pattern, StringComparison.OrdinalIgnoreCase);
+
+        try
+        {
+            return Regex.IsMatch(input, pattern, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200));
+        }
+        catch (ArgumentException)
+        {
+            // 正则写错了就当不匹配，不抛异常
+            return false;
+        }
+    }
+
+    /// <summary>检查一个表达式是不是合法正则（UI 用来显示红/绿底色）。</summary>
+    public static CommandMatchState CheckPattern(string pattern, bool useRegex)
+    {
+        if (string.IsNullOrWhiteSpace(pattern)) return CommandMatchState.Empty;
+        if (!useRegex) return CommandMatchState.Valid;
+
+        try
+        {
+            _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromMilliseconds(200));
+            return CommandMatchState.Valid;
+        }
+        catch (ArgumentException)
+        {
+            return CommandMatchState.Invalid;
+        }
     }
 
     private static ReportChannel? MapChannel(XivChatType kind) => kind switch
     {
         XivChatType.Echo => ReportChannel.Echo,
         XivChatType.Party => ReportChannel.Party,
+        XivChatType.TellIncoming => ReportChannel.Tell,
+        XivChatType.TellOutgoing => ReportChannel.Tell,
 
         XivChatType.Ls1 or XivChatType.Ls2 or XivChatType.Ls3 or XivChatType.Ls4
             or XivChatType.Ls5 or XivChatType.Ls6 or XivChatType.Ls7 or XivChatType.Ls8
@@ -105,9 +166,9 @@ public sealed class ChatCommandListener : IDisposable
     public void SendReport(ReportChannel channel)
     {
         foreach (var line in ReportFormatter.BuildFullReport(ledger, config, recruitProvider(), catalog))
-            sender.SendTo(channel, config, line);
+            sender.SendTo(channel, config, line, LastTellSender);
     }
 
     private void SendLine(ReportChannel channel, string line)
-        => sender.SendTo(channel, config, line);
+        => sender.SendTo(channel, config, line, LastTellSender);
 }

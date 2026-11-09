@@ -20,6 +20,9 @@ public enum ReportChannel
 
     /// <summary>跨服通讯贝 /cwl1-8</summary>
     CrossWorldLinkshell,
+
+    /// <summary>悄悄话 /tell</summary>
+    Tell,
 }
 
 /// <summary>宝图分类，顺序与 Triggernometry XML 一致。</summary>
@@ -41,12 +44,21 @@ public sealed class Configuration : IPluginConfiguration
     public string QueryCommand { get; set; } = "挖宝查询";
     public string ResetCommand { get; set; } = "挖宝重置";
 
+    /// <summary>查询指令是否按正则匹配。</summary>
+    public bool QueryCommandIsRegex { get; set; } = false;
+
+    /// <summary>重置指令是否按正则匹配。</summary>
+    public bool ResetCommandIsRegex { get; set; } = false;
+
     // ── 频道 ──────────────────────────────────────────
     /// <summary>允许响应查询的频道，默认只有默语。</summary>
     public List<ReportChannel> ListenChannels { get; set; } = new() { ReportChannel.Echo };
 
     public int LocalLinkshellIndex { get; set; } = 1;
     public int CrossLinkshellIndex { get; set; } = 1;
+
+    /// <summary>悄悄话频道回给谁。留空则回给发消息的人。</summary>
+    public string TellTargetName { get; set; } = string.Empty;
 
     // ── 物品 ──────────────────────────────────────────
     /// <summary>被关闭统计的内置物品 ID。</summary>
@@ -95,6 +107,7 @@ public sealed class Configuration : IPluginConfiguration
         ReportChannel.Party => "/p ",
         ReportChannel.LinkshellLocal => $"/l{LocalLinkshellIndex} ",
         ReportChannel.CrossWorldLinkshell => $"/cwl{CrossLinkshellIndex} ",
+        ReportChannel.Tell => "/tell " + TellTargetName + " ",
         _ => "/e ",
     };
 
@@ -104,6 +117,7 @@ public sealed class Configuration : IPluginConfiguration
         ReportChannel.Party => "小队",
         ReportChannel.LinkshellLocal => "本服贝",
         ReportChannel.CrossWorldLinkshell => "跨服贝",
+        ReportChannel.Tell => "悄悄话",
         _ => c.ToString(),
     };
 
