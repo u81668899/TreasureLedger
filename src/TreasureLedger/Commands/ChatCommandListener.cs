@@ -20,6 +20,7 @@ public sealed class ChatCommandListener : IDisposable
     private readonly SessionLedger ledger;
     private readonly ChatSender sender;
     private readonly Action resetLedger;
+    private readonly Func<string> recruitProvider;
 
     public ChatCommandListener(
         IChatGui chat,
@@ -27,7 +28,8 @@ public sealed class ChatCommandListener : IDisposable
         Configuration config,
         SessionLedger ledger,
         ChatSender sender,
-        Action resetLedger)
+        Action resetLedger,
+        Func<string> recruitProvider)
     {
         this.chat = chat;
         this.log = log;
@@ -35,6 +37,7 @@ public sealed class ChatCommandListener : IDisposable
         this.ledger = ledger;
         this.sender = sender;
         this.resetLedger = resetLedger;
+        this.recruitProvider = recruitProvider;
 
         chat.ChatMessage += OnChatMessage;
     }
@@ -97,7 +100,7 @@ public sealed class ChatCommandListener : IDisposable
 
     public void SendReport(ReportChannel channel)
     {
-        foreach (var line in ReportFormatter.BuildFullReport(ledger, config))
+        foreach (var line in ReportFormatter.BuildFullReport(ledger, config, recruitProvider()))
             sender.SendTo(channel, config, line);
     }
 

@@ -21,6 +21,8 @@ public sealed class ConfigWindow
     private readonly Action<string> sendToChat;
     private readonly Action<bool> setPreview;
     private readonly Action onDataChanged;
+    private readonly Func<string> recruitTextProvider;
+    private readonly Action<string> setRecruit;
 
     // 添加自定义物品的输入缓冲
     private string newItemId = string.Empty;
@@ -36,7 +38,9 @@ public sealed class ConfigWindow
         Action resetLedger,
         Action<string> sendToChat,
         Action<bool> setPreview,
-        Action onDataChanged)
+        Action onDataChanged,
+        Func<string> recruitTextProvider,
+        Action<string> setRecruit)
 
     {
         this.config = config;
@@ -48,6 +52,8 @@ public sealed class ConfigWindow
         this.sendToChat = sendToChat;
         this.setPreview = setPreview;
         this.onDataChanged = onDataChanged;
+        this.recruitTextProvider = recruitTextProvider;
+        this.setRecruit = setRecruit;
 
     }
 
@@ -106,6 +112,21 @@ public sealed class ConfigWindow
         {
             config.ResetOnPartyJoin = join;
             saveConfig();
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextDisabled("招募内容（会随统计一起播报）");
+
+        var rc = recruitTextProvider();
+        if (ImGui.InputText("招募", ref rc, 128))
+        {
+            setRecruit(rc);
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("清空"))
+        {
+            setRecruit(string.Empty);
         }
 
         var print = config.PrintLootLocally;

@@ -95,7 +95,7 @@ public static class ReportFormatter
     }
 
     /// <summary>发送用完整内容。</summary>
-    public static List<string> BuildFullReport(SessionLedger ledger, Configuration config)
+    public static List<string> BuildFullReport(SessionLedger ledger, Configuration config, string recruitText = "")
     {
         var lines = new List<string> { BuildSummaryLine(ledger) };
 
@@ -107,6 +107,9 @@ public static class ReportFormatter
 
         if (ledger.LastDutyName.Length > 0)
             lines.Add("当前：" + ledger.LastDutyName);
+
+        if (!string.IsNullOrWhiteSpace(recruitText))
+            lines.Add("招募：《" + recruitText.Trim() + "》");
 
         lines.AddRange(BuildLootLines(ledger, config));
         return lines;

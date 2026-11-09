@@ -10,6 +10,7 @@ using TreasureLedger.Items;
 using TreasureLedger.Ledger;
 using TreasureLedger.Loot;
 using TreasureLedger.Maps;
+using TreasureLedger.Recruit;
 using TreasureLedger.Storage;
 using TreasureLedger.UI;
 
@@ -26,6 +27,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly ICommandManager commands;
     private readonly IClientState clientState;
     private readonly ISigScanner sigScanner;
+    private readonly IPartyFinderGui partyFinder;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -38,6 +40,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly LogProbe probe;
     private readonly AutoRoller roller;
     private readonly HistoryStore history;
+    private readonly RecruitTracker recruit;
     private readonly RunGains runGains = new();
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
@@ -54,7 +57,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         IDataManager data,
         ICommandManager commands,
         IClientState clientState,
-        ISigScanner sigScanner)
+        ISigScanner sigScanner,
+        IPartyFinderGui partyFinder)
     {
         this.pluginInterface = pluginInterface;
         this.chat = chat;
@@ -63,11 +67,13 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         this.commands = commands;
         this.clientState = clientState;
         this.sigScanner = sigScanner;
+        this.partyFinder = partyFinder;
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
         sender = new ChatSender(chat, log) { PreviewOnly = config.ChannelPreviewOnly };
         history = new HistoryStore(log);
+        recruit = new RecruitTracker(log, partyFinder);
 
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
@@ -79,7 +85,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         capture.LogSeen += OnLogSeen;
 
         chatCommands = new ChatCommandListener(
-            chat, log, config, ledger, sender, ResetLedger);
+            chat, log, config, ledger, sender, ResetLedger, () => recruit.Current);
 
         roller = new AutoRoller(log, sigScanner);
         var rollReady = roller.TryInitialize();
@@ -90,7 +96,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
             config, ledger, tracker, catalog,
             SaveConfig, ResetLedger, s => sender.PrintLocal(s),
             b => sender.PreviewOnly = b,
-            () => historyWindow.Invalidate());
+            () => historyWindow.Invalidate(),
+            () => recruit.Current,
+            t => recruit.Set(t));
 
         mainWindow.Add("配置", configWindow);
         mainWindow.Add("长期统计", historyWindow);
@@ -130,6 +138,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         sender.Dispose();
         roller.Dispose();
         history.Dispose();
+        recruit.Dispose();
         probe.Stop(chat);
         probe.Dispose();
 
@@ -220,5 +229,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         runGains.Gil += amount;
     }
 
-    private void OnLogSeen(uint id, string text) => tracker.OnLog(id, text);
+    private void OnLogSeen(uint id, string text)
+    {
+        recruit.TryParseChat(text);
+        tracker.OnLog(id, text);
+    }
 }
