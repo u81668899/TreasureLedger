@@ -50,6 +50,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly AutoExiter autoExiter;
     private readonly DutyExiter dutyExiter;
     private readonly GameCommandExecutor commandExecutor;
+    private readonly AddonDumper addonDumper;
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
@@ -94,6 +95,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         vaultProbe = new VaultProbe(log, objectTable);
         autoExiter = new AutoExiter(log, vaultProbe, msg => sender.SendTo(ReportChannel.Echo, config, msg));
         commandExecutor = new GameCommandExecutor(log, sigScanner);
+        addonDumper = new AddonDumper(log);
         dutyExiter = new DutyExiter(log, addonLifecycle, commandExecutor);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
@@ -125,6 +127,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         mainWindow.Add("配置", configWindow);
         mainWindow.Add("自动投掷", autoRollWindow);
+        mainWindow.Add("调试", new DebugWindow(addonDumper, commandExecutor));
         mainWindow.Add("长期统计", historyWindow);
 
         windowSystem.AddWindow(mainWindow);
@@ -140,6 +143,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         var ver = typeof(TreasureLedgerPlugin).Assembly.GetName().Version;
         chat.Print($"[TreasureLedger] v{ver} 已加载　输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
         var cmdReady = commandExecutor.TryInitialize();
+
 
         chat.Print($"[TreasureLedger] 原生命令执行：{(cmdReady ? "已就绪" : "未就绪")}");
 
