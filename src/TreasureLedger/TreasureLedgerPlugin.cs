@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
@@ -9,6 +10,7 @@ using TreasureLedger.Items;
 using TreasureLedger.Ledger;
 using TreasureLedger.Loot;
 using TreasureLedger.Maps;
+using TreasureLedger.Storage;
 using TreasureLedger.UI;
 
 namespace TreasureLedger;
@@ -24,7 +26,6 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly ICommandManager commands;
     private readonly IClientState clientState;
     private readonly ISigScanner sigScanner;
-    private readonly AutoRoller roller;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -35,8 +36,15 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly DungeonTracker tracker;
     private readonly ChatCommandListener chatCommands;
     private readonly LogProbe probe;
+    private readonly AutoRoller roller;
+    private readonly HistoryStore history;
+    private readonly RunGains runGains = new();
+
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
+    private readonly HistoryWindow historyWindow;
+    private readonly MainWindow mainWindow;
+
     private DateTime lastPrune = DateTime.Now;
 
     public TreasureLedgerPlugin(
@@ -59,8 +67,10 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
         sender = new ChatSender(chat, log) { PreviewOnly = config.ChannelPreviewOnly };
+        history = new HistoryStore(log);
 
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
+        tracker.RunEnded += OnRunEnded;
 
         capture = new LootCapture(chat, log, catalog);
         capture.LootReceived += OnLoot;
@@ -71,37 +81,43 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         chatCommands = new ChatCommandListener(
             chat, log, config, ledger, sender, ResetLedger);
 
+        roller = new AutoRoller(log, sigScanner);
+        var rollReady = roller.TryInitialize();
+
+        historyWindow = new HistoryWindow(history, config);
+        mainWindow = new MainWindow();
         configWindow = new ConfigWindow(
             config, ledger, tracker, catalog,
-            SaveConfig, ResetLedger,
-            s => sender.PrintLocal(s),
-            b => sender.PreviewOnly = b);
+            SaveConfig, ResetLedger, s => sender.PrintLocal(s),
+            b => sender.PreviewOnly = b,
+            () => historyWindow.Invalidate());
 
-        windowSystem.AddWindow(configWindow);
+        mainWindow.Add("配置", configWindow);
+        mainWindow.Add("长期统计", historyWindow);
 
+        windowSystem.AddWindow(mainWindow);
         pluginInterface.UiBuilder.Draw += windowSystem.Draw;
-        pluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
-        pluginInterface.UiBuilder.OpenMainUi += ToggleConfigUi;
+        pluginInterface.UiBuilder.OpenConfigUi += ToggleMain;
+        pluginInterface.UiBuilder.OpenMainUi += ToggleMain;
 
         probe = new LogProbe(log);
         if (config.EnableLogProbe) probe.Start(chat);
 
-        // 自动投掷：定位投掷函数（只定位，不执行任何投掷）
-        roller = new AutoRoller(log, sigScanner);
-        var rollReady = roller.TryInitialize();
-
-        chat.Print($"[TreasureLedger] v{typeof(TreasureLedgerPlugin).Assembly.GetName().Version} 已加载　" +
-                   $"输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
-        chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪（特征码未匹配）")}");
-        log.Information("[TreasureLedger] 加载完成，投掷函数就绪={Ready}", rollReady);
+        var ver = typeof(TreasureLedgerPlugin).Assembly.GetName().Version;
+        chat.Print($"[TreasureLedger] v{ver} 已加载　输入「{config.QueryCommand}」查询，「{config.ResetCommand}」重置");
+        chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪")}　历史目录：{history.Directory_}");
+        log.Information("[TreasureLedger] 加载完成 v{Ver}，投掷就绪={Ready}", ver?.ToString() ?? "?", rollReady);
     }
 
     public void Dispose()
     {
         pluginInterface.UiBuilder.Draw -= windowSystem.Draw;
-        pluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
-        pluginInterface.UiBuilder.OpenMainUi -= ToggleConfigUi;
+        pluginInterface.UiBuilder.OpenConfigUi -= ToggleMain;
+        pluginInterface.UiBuilder.OpenMainUi -= ToggleMain;
         windowSystem.RemoveAllWindows();
+
+        // 未结束的行程也要落盘
+        OnRunEnded();
 
         capture.LootReceived -= OnLoot;
         capture.RollNotified -= OnRollNotified;
@@ -113,13 +129,14 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         tracker.Dispose();
         sender.Dispose();
         roller.Dispose();
+        history.Dispose();
         probe.Stop(chat);
         probe.Dispose();
 
         log.Information("[TreasureLedger] 已卸载");
     }
 
-    private void ToggleConfigUi() => configWindow.Toggle();
+    private void ToggleMain() => mainWindow.Toggle();
 
     private void SaveConfig() => config.Save(pluginInterface);
 
@@ -127,18 +144,44 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     {
         ledger.Reset();
         dedup.Reset();
+        runGains.Clear();
     }
 
-    /// <summary>投掷通知：登记件数，等进包时兑现。</summary>
+    /// <summary>行程结束：把本趟收益写入历史。</summary>
+    private void OnRunEnded()
+    {
+        var run = ledger.CurrentRun;
+        if (run is null) return;
+
+        // 没收益的空行程不记
+        if (runGains.IsEmpty && run.TotalChests == 0 && run.MaxFloor == 0) return;
+
+        try
+        {
+            run.EndedAt = DateTime.Now;
+            var rec = RecordFactory.FromRun(run, runGains);
+            history.Append(rec);
+
+            log.Information("[TreasureLedger] 已记录行程 {Rec}", rec.ToString());
+            historyWindow.Invalidate();
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, "[TreasureLedger] 记录行程失败");
+        }
+        finally
+        {
+            runGains.Clear();
+        }
+    }
+
     private void OnRollNotified(uint itemId, int count)
     {
         if (!config.IsItemEnabled(itemId)) return;
         dedup.RegisterRoll(itemId, count);
-        log.Debug("[TreasureLedger] 投掷登记 {Item}×{N}，待兑现 {P}",
-            catalog.GetName(itemId), count, dedup.PendingFor(itemId));
+        log.Debug("[TreasureLedger] 投掷登记 {Item}×{N}", catalog.GetName(itemId), count);
     }
 
-    /// <summary>进包掉落：按投掷队列兑现，剩余按原来源计。</summary>
     private void OnLoot(LootEntry entry)
     {
         if (!config.IsItemEnabled(entry.ItemId))
@@ -150,18 +193,19 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         var r = dedup.Resolve(entry.ItemId, entry.Count, entry.Source);
 
         if (r.Count > 0)
+        {
             ledger.AddItem(entry.ItemId, r.Count, r.Source);
+            runGains.AddItem(entry.ItemId, r.Count, r.Source);
+        }
 
         if (r.HasLeftover)
+        {
             ledger.AddItem(entry.ItemId, r.Leftover, r.LeftoverSource);
+            runGains.AddItem(entry.ItemId, r.Leftover, r.LeftoverSource);
+        }
 
         if (config.PrintLootLocally)
-        {
-            var parts = new System.Collections.Generic.List<string>();
-            if (r.Count > 0) parts.Add($"+{r.Count} {r.Source}");
-            if (r.HasLeftover) parts.Add($"+{r.Leftover} {r.LeftoverSource}");
-            chat.Print($"[TreasureLedger] {entry.ItemName}  {string.Join("  ", parts)}");
-        }
+            chat.Print($"[TreasureLedger] {entry.ItemName} +{r.Count + r.Leftover}");
 
         if (DateTime.Now - lastPrune > TimeSpan.FromMinutes(5))
         {
@@ -170,7 +214,11 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         }
     }
 
-    private void OnGil(long amount) => ledger.Gil += amount;
+    private void OnGil(long amount)
+    {
+        ledger.Gil += amount;
+        runGains.Gil += amount;
+    }
 
     private void OnLogSeen(uint id, string text) => tracker.OnLog(id, text);
 }

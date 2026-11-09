@@ -29,6 +29,9 @@ public sealed class DungeonTracker : IDisposable
 
     public event Action? StateChanged;
 
+    /// <summary>一趟宝库行程结束（离开本时触发）。</summary>
+    public event Action? RunEnded;
+
     public DungeonTracker(
         IClientState clientState,
         IPluginLog log,
@@ -72,7 +75,9 @@ public sealed class DungeonTracker : IDisposable
         }
         else if (prev is not null)
         {
-            // 离开宝库
+            // 离开宝库：先把行程收尾，再清空 CurrentRun
+            RunEnded?.Invoke();
+
             var run = ledger.EndRun();
             if (run is not null)
             {

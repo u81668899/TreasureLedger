@@ -10,7 +10,7 @@ using TreasureLedger.Report;
 
 namespace TreasureLedger.UI;
 
-public sealed class ConfigWindow : Window
+public sealed class ConfigWindow
 {
     private readonly Configuration config;
     private readonly SessionLedger ledger;
@@ -20,6 +20,7 @@ public sealed class ConfigWindow : Window
     private readonly Action resetLedger;
     private readonly Action<string> sendToChat;
     private readonly Action<bool> setPreview;
+    private readonly Action onDataChanged;
 
     // 添加自定义物品的输入缓冲
     private string newItemId = string.Empty;
@@ -34,8 +35,9 @@ public sealed class ConfigWindow : Window
         Action saveConfig,
         Action resetLedger,
         Action<string> sendToChat,
-        Action<bool> setPreview)
-        : base("Treasure Ledger###tl-config")
+        Action<bool> setPreview,
+        Action onDataChanged)
+
     {
         this.config = config;
         this.ledger = ledger;
@@ -45,16 +47,11 @@ public sealed class ConfigWindow : Window
         this.resetLedger = resetLedger;
         this.sendToChat = sendToChat;
         this.setPreview = setPreview;
+        this.onDataChanged = onDataChanged;
 
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(480, 360),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
-        Size = new Vector2(560, 680);
     }
 
-    public override void Draw()
+    public void DrawBody()
     {
         DrawHeader();
         ImGui.Separator();
