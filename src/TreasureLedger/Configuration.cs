@@ -54,9 +54,6 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>允许响应查询的频道，默认只有默语。</summary>
     public List<ReportChannel> ListenChannels { get; set; } = new() { ReportChannel.Echo };
 
-    public int LocalLinkshellIndex { get; set; } = 1;
-    public int CrossLinkshellIndex { get; set; } = 1;
-
     /// <summary>
     /// 启用的本服贝序号（1-8，可多选）。
     /// 玩家可能同时挂在好几个贝里，查询要能回多个。

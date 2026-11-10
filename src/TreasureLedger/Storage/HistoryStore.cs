@@ -66,7 +66,7 @@ public sealed class HistoryStore : IDisposable
         Directory.CreateDirectory(historyDir);
     }
 
-    public string Directory_ => historyDir;
+    public string HistoryDirectory => historyDir;
 
     public void Dispose()
     {

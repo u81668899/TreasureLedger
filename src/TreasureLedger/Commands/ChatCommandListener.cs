@@ -150,8 +150,11 @@ public sealed class ChatCommandListener : IDisposable
     {
         XivChatType.Echo => ReportChannel.Echo,
         XivChatType.Party => ReportChannel.Party,
+
+        // 只处理收到的悄悄话。
+        // 不能把 TellOutgoing 也映射进来 —— 我们自己发出去的回复
+        // 会再次被监听，如果内容里又含指令就会无限循环。
         XivChatType.TellIncoming => ReportChannel.Tell,
-        XivChatType.TellOutgoing => ReportChannel.Tell,
 
         XivChatType.Ls1 or XivChatType.Ls2 or XivChatType.Ls3 or XivChatType.Ls4
             or XivChatType.Ls5 or XivChatType.Ls6 or XivChatType.Ls7 or XivChatType.Ls8

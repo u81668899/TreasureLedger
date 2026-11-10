@@ -117,17 +117,23 @@ public sealed unsafe class MarkerService
             var mc = MarkingController.Instance();
             if (mc is null) return false;
 
-            var index = (int)mark;
-            var markers = mc->FieldMarkers;
-            if (index < 0 || index >= markers.Length) return false;
+            var index = (uint)mark;
+            if (index >= 8) return false;
 
-            markers[index].Position = position;
-            markers[index].Active = true;
+            // 走游戏函数，而不是直接写结构体。
+            // 直接改 FieldMarkers 内存不会通知 UI 刷新，标点不会显示出来。
+            var ok = mc->PlaceFieldMarker(index, &position);
 
-            WaymarkCount++;
-            LastResult = $"标点 {mark} → ({position.X:F0}, {position.Y:F0}, {position.Z:F0})";
-            log.Debug("[TreasureLedger] {Result}", LastResult);
-            return true;
+            if (ok != 0)
+            {
+                WaymarkCount++;
+                LastResult = $"标点 {mark} → ({position.X:F0}, {position.Y:F0}, {position.Z:F0})";
+                log.Debug("[TreasureLedger] {Result}", LastResult);
+                return true;
+            }
+
+            LastResult = $"标点 {mark} 放置被拒绝";
+            return false;
         }
         catch (Exception ex)
         {
@@ -151,13 +157,15 @@ public sealed unsafe class MarkerService
             var mc = MarkingController.Instance();
             if (mc is null) return false;
 
-            var markers = mc->FieldMarkers;
-            for (var i = 0; i < markers.Length; i++)
-                markers[i].Active = false;
-
+            // 同样走游戏函数，保证 UI 同步刷新
+            mc->ClearFieldMarkers();
             return true;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            log.Error(ex, "[TreasureLedger] 清除标点失败");
+            return false;
+        }
     }
 }
 

@@ -176,7 +176,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         chat.Print($"[TreasureLedger] 原生命令执行：{(cmdReady ? "已就绪" : "未就绪")}");
 
         chat.Print($"[TreasureLedger] 自动投掷：{(rollReady ? "已就绪" : "未就绪：" + roller.UnavailableReason)}");
-        chat.Print($"[TreasureLedger] 历史目录：{history.Directory_}");
+        chat.Print($"[TreasureLedger] 历史目录：{history.HistoryDirectory}");
         log.Information("[TreasureLedger] 加载完成 v{Ver}，投掷就绪={Ready}", ver?.ToString() ?? "?", rollReady);
     }
 
@@ -227,6 +227,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         runGains.Clear();
         treasureContext.Reset();
         mobTracker.Reset();
+        treasureMarkCursor = 0;
     }
 
     /// <summary>行程结束：把本趟收益写入历史。</summary>
@@ -397,50 +398,89 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
             // 传送自动确认的启用状态
             TickTeleport();
 
-            var cfg = config.AutoRoll;
-            if (!cfg.Enabled) return;
+            // ── 自动投掷 ──
+            TickAutoRoll();
 
-            // 挖宝上下文：宝库副本内 或 野外最近有挖宝活动
-            // （野外打宝图看门怪时同样会有掉落要 roll）
-            var inDungeon = tracker.CurrentDungeon is not null;
-            if (cfg.OnlyInTreasureContext
-                && !treasureContext.IsTreasureContext(inDungeon, cfg.TreasureContextMinutes))
-                return;
-
-            roller.RunOnce(cfg);
-
-            // 自动退出
-            var exitCfg = config.AutoExit;
-            if (exitCfg.Enabled)
-            {
-                var run = ledger.CurrentRun;
-                var hasBottom = run is not null && run.ReachedBottom;
-                if (autoExiter.Tick(exitCfg, tracker.CurrentDungeon is not null, hasBottom))
-                    dutyExiter.RequestExit();
-            }
+            // ── 自动退出 ──
+            // 注意：这里必须独立于自动投掷开关。
+            // 之前把自动退出写在 `if (!cfg.Enabled) return;` 之后，
+            // 导致自动投掷一关就连自动退出也失效了。
+            TickAutoExit();
         }
         catch (Exception ex)
         {
-            log.Error(ex, "[TreasureLedger] 自动投掷循环异常");
+            log.Error(ex, "[TreasureLedger] 主循环异常");
         }
+    }
+
+    /// <summary>自动投掷。</summary>
+    private void TickAutoRoll()
+    {
+        var cfg = config.AutoRoll;
+        if (!cfg.Enabled) return;
+
+        // 挖宝上下文：宝库副本内 或 野外最近有挖宝活动
+        // （野外打宝图看门怪时同样会有掉落要 roll）
+        var inDungeon = tracker.CurrentDungeon is not null;
+        if (cfg.OnlyInTreasureContext
+            && !treasureContext.IsTreasureContext(inDungeon, cfg.TreasureContextMinutes))
+            return;
+
+        roller.RunOnce(cfg);
+    }
+
+    /// <summary>自动退出。</summary>
+    private void TickAutoExit()
+    {
+        var exitCfg = config.AutoExit;
+        if (!exitCfg.Enabled) return;
+
+        var run = ledger.CurrentRun;
+        var hasBottom = run is not null && run.ReachedBottom;
+        var inDungeon = tracker.CurrentDungeon is not null;
+
+        if (autoExiter.Tick(exitCfg, inDungeon, hasBottom))
+            dutyExiter.RequestExit();
     }
 
     private void OnLogSeen(uint id, string text)
     {
+        // ── 性能约束 ──
+        // LogMessage 在战斗时每秒可能有上百条。
+        // 所以先用最便宜的整数比较把无关日志挡掉，
+        // 只对少数几个关心的 id 才做字符串/正则处理。
+        switch (id)
+        {
+            case Loot.LogIds.TrapMobsCleared:
+                treasureParty.MarkHardEvidence("陷阱魔物全清");
+                tracker.OnLog(id, string.Empty);
+                return;
+
+            case Loot.LogIds.PortalAppeared:
+                treasureParty.MarkHardEvidence("传送魔纹出现");
+                tracker.OnLog(id, string.Empty);
+                return;
+
+            case Loot.LogIds.DutyStarted:
+            case Loot.LogIds.DutyEnded:
+            case Loot.LogIds.GateOpenedA:
+            case Loot.LogIds.GateOpenedB:
+            case Loot.LogIds.FinalAreaA:
+            case Loot.LogIds.FinalAreaB:
+            case Loot.LogIds.JoinedParty:
+            case Loot.LogIds.JoinedPartyOf:
+            case Loot.LogIds.RecruitStartedA:
+            case Loot.LogIds.RecruitStartedB:
+                // 这些需要文本，但数量有限，正常处理
+                break;
+
+            default:
+                // 其余日志直接丢弃，不做任何字符串处理
+                return;
+        }
+
         recruit.TryParseChat(text);
-
-        // 野外挖宝活动标记（打宝图怪、开宝图箱等）
-        if (treasureContext.TryMarkFromLog(text))
-            log.Debug("[TreasureLedger] 野外挖宝活动已标记");
-
-        // 硬证据：陷阱魔物全清、传送魔纹出现
-        if (id == Loot.LogIds.TrapMobsCleared)
-            treasureParty.MarkHardEvidence("陷阱魔物全清");
-        else if (id == Loot.LogIds.PortalAppeared)
-            treasureParty.MarkHardEvidence("传送魔纹出现");
-        else if (text.Contains("将陷阱引来的魔物全部打倒了", StringComparison.Ordinal))
-            treasureParty.MarkHardEvidence("陷阱魔物全清");
-
+        treasureContext.TryMarkFromLog(text);
         tracker.OnLog(id, text);
     }
 }
