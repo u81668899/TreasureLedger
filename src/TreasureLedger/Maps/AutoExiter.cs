@@ -38,6 +38,18 @@ public sealed class AutoExiter
 
     private DateTime conditionMetAt = DateTime.MinValue;
 
+    /// <summary>
+    /// 上次探测时间。
+    /// 探测要遍历 ObjectTable 和 Loot 列表，开销不小，
+    /// 而低配机器上每帧都扫会明显掉帧。限流到 300ms。
+    /// </summary>
+    private DateTime lastProbe = DateTime.MinValue;
+    private static readonly TimeSpan ProbeInterval = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>缓存的探测结果。</summary>
+    private int cachedChests;
+    private int cachedPending;
+
     public AutoExitState State { get; private set; } = AutoExitState.Idle;
 
     /// <summary>最近一次为什么等待（调试用）。</summary>
@@ -88,7 +100,20 @@ public sealed class AutoExiter
         // 已经退出了就别重复
         if (State == AutoExitState.Exited) return false;
 
-        var chests = probe.CountUnopenedChests();
+        // ── 探测限流 ──
+        // 探测要遍历 ObjectTable + Loot 列表，低配机器上每帧扫会掉帧。
+        // 每 300ms 才真正扫一次，其余帧用缓存。
+        var now = DateTime.Now;
+        if (now - lastProbe >= ProbeInterval)
+        {
+            lastProbe = now;
+            cachedChests = probe.CountUnopenedChests();
+            cachedPending = cfg.RequireRollsFinished ? probe.CountPendingRolls() : 0;
+        }
+
+        var chests = cachedChests;
+        var pending = cachedPending;
+
         if (chests > 0)
         {
             LastReason = $"还有 {chests} 个箱子没开";
@@ -97,16 +122,12 @@ public sealed class AutoExiter
             return false;
         }
 
-        if (cfg.RequireRollsFinished)
+        if (cfg.RequireRollsFinished && pending > 0)
         {
-            var pending = probe.CountPendingRolls();
-            if (pending > 0)
-            {
-                LastReason = $"还有 {pending} 件待投掷";
-                conditionMetAt = DateTime.MinValue;
-                State = AutoExitState.Idle;
-                return false;
-            }
+            LastReason = $"还有 {pending} 件待投掷";
+            conditionMetAt = DateTime.MinValue;
+            State = AutoExitState.Idle;
+            return false;
         }
 
         // 条件满足，开始计时
@@ -121,8 +142,8 @@ public sealed class AutoExiter
                 notify($"宝库已完成，{cfg.WaitSeconds} 秒后自动退出");
         }
 
-        // 等待期间再确认一次，避免这期间又刷出箱子
-        if (chests > 0 || (cfg.RequireRollsFinished && probe.CountPendingRolls() > 0))
+        // 等待期间若又出现新目标，取消退出（已用缓存值判断）
+        if (chests > 0 || (cfg.RequireRollsFinished && pending > 0))
         {
             conditionMetAt = DateTime.MinValue;
             State = AutoExitState.Idle;

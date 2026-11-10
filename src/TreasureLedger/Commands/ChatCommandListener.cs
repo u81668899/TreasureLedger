@@ -39,6 +39,7 @@ public sealed class ChatCommandListener : IDisposable
     private readonly Func<string> recruitProvider;
     private readonly ItemCatalog? catalog;
     private readonly Func<string>? mobSummaryProvider;
+    private readonly IObjectTable? objectTable;
 
     public ChatCommandListener(
         IChatGui chat,
@@ -49,7 +50,8 @@ public sealed class ChatCommandListener : IDisposable
         Action resetLedger,
         Func<string> recruitProvider,
         ItemCatalog? catalog = null,
-        Func<string>? mobSummaryProvider = null)
+        Func<string>? mobSummaryProvider = null,
+        IObjectTable? objectTable = null)
     {
         this.chat = chat;
         this.log = log;
@@ -60,11 +62,31 @@ public sealed class ChatCommandListener : IDisposable
         this.recruitProvider = recruitProvider;
         this.catalog = catalog;
         this.mobSummaryProvider = mobSummaryProvider;
+        this.objectTable = objectTable;
 
         chat.ChatMessage += OnChatMessage;
     }
 
     public void Dispose() => chat.ChatMessage -= OnChatMessage;
+
+    /// <summary>缓存自己的角色名。</summary>
+    private string selfName = string.Empty;
+
+    /// <summary>取自己的角色名（缓存）。</summary>
+    private string GetSelfName()
+    {
+        if (selfName.Length > 0) return selfName;
+
+        try
+        {
+            var me = objectTable?.LocalPlayer;
+            if (me is not null)
+                selfName = me.Name.TextValue ?? string.Empty;
+        }
+        catch { }
+
+        return selfName;
+    }
 
     /// <summary>悄悄话回给谁：最近一次发消息给我们的人。</summary>
     public string LastTellSender { get; private set; } = string.Empty;
@@ -81,12 +103,21 @@ public sealed class ChatCommandListener : IDisposable
             var text = message.Message.TextValue?.Trim();
             if (string.IsNullOrEmpty(text)) return;
 
-            // 悄悄话：记住是谁发的，回消息要用
+            // 悄悄话：记住是谁发的，回消息要用。
+            // 同时屏蔽自己 —— 自己发出去的悄悄话（TellOutgoing）不该被当成请求，
+            // 既避免自问自答，也避免无限循环。
             if (channel.Value == ReportChannel.Tell)
             {
-                var name = message.Sender.TextValue;
-                if (!string.IsNullOrWhiteSpace(name))
-                    LastTellSender = name!.Trim();
+                var senderName = message.Sender.TextValue?.Trim();
+                if (string.IsNullOrEmpty(senderName)) return;
+
+                // 自己发的直接忽略
+                var self = GetSelfName();
+                if (self.Length > 0
+                    && string.Equals(senderName, self, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                LastTellSender = senderName;
             }
 
             if (Matches(text!, config.QueryCommand, config.QueryCommandIsRegex))

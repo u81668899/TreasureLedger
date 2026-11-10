@@ -63,8 +63,6 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>启用的跨服贝序号（1-8，可多选）。</summary>
     public List<int> CrossLinkshellIndices { get; set; } = new() { 1 };
 
-    /// <summary>悄悄话固定回复对象（可多个）。留空则回给发消息的人。</summary>
-    public List<string> TellTargets { get; set; } = new();
 
     // ── 物品 ──────────────────────────────────────────
     /// <summary>被关闭统计的内置物品 ID。</summary>

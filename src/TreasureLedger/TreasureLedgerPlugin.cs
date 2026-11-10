@@ -153,6 +153,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         mainWindow.Add("配置", configWindow);
         mainWindow.Add("自动投掷", autoRollWindow);
+        mainWindow.Add("自动退出", new AutoExitWindow(config, autoExiter, dutyExiter, vaultProbe, SaveConfig));
         mainWindow.Add("小怪与标记", new MobWindow(config, mobTracker, markerService, SaveConfig));
         mainWindow.Add("传送", new TeleportWindow(config, teleportConfirm, treasureParty, SaveConfig));
         mainWindow.Add("调试", new DebugWindow(addonDumper, commandExecutor, dutyExiter));
@@ -384,13 +385,29 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         runGains.Gil += amount;
     }
 
-    /// <summary>每帧检查是否需要自动投掷。</summary>
+    /// <summary>上一次做低频工作的时刻。</summary>
+    private DateTime lastSlowTick = DateTime.MinValue;
+
+    /// <summary>
+    /// 低频工作间隔。
+    /// 用户可能用很旧的机器，每帧做大量判断会掉帧。
+    /// 这些工作（神殿标点、传送状态、投掷、退出）都不需要每帧精度，
+    /// 统一 200ms 一次足够。
+    /// </summary>
+    private static readonly TimeSpan SlowTickInterval = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>每帧检查。</summary>
     private void OnFrameworkUpdate(IFramework fw)
     {
         try
         {
-            // 小怪扫描与标记（不受自动投掷开关影响）
+            // 小怪扫描自己内部有 150ms 限流，直接调用即可
             mobTracker.Tick();
+
+            // 其余工作统一降频
+            var now = DateTime.Now;
+            if (now - lastSlowTick < SlowTickInterval) return;
+            lastSlowTick = now;
 
             // 进神殿自动放标点（每趟只放一次）
             TickShrineWaymarks();

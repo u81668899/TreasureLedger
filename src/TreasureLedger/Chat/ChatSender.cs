@@ -89,35 +89,22 @@ public sealed class ChatSender : IDisposable
     /// </summary>
     private bool SendTell(Configuration config, string text, string? tellTarget)
     {
-        // 目标是「固定名单」优先，其次回给发件人
-        var targets = config.TellTargets
-            .Where(t => !string.IsNullOrWhiteSpace(t))
-            .Select(t => t.Trim())
-            .ToList();
-
-        if (targets.Count == 0 && !string.IsNullOrWhiteSpace(tellTarget))
-            targets.Add(tellTarget.Trim());
-
-        if (targets.Count == 0)
+        // 悄悄话只回给发消息的人，不做固定名单群发。
+        if (string.IsNullOrWhiteSpace(tellTarget))
         {
             log.Warning("[TreasureLedger] 悄悄话缺少收件人，已跳过");
             return false;
         }
 
-        var ok = false;
-        foreach (var t in targets)
-        {
-            if (PreviewOnly)
-            {
-                PrintLocal($"[悄悄话→{t}] {text}");
-                ok = true;
-                continue;
-            }
+        var target = tellTarget.Trim();
 
-            ok |= Send(XivChatType.TellOutgoing, text, tellTarget: t);
+        if (PreviewOnly)
+        {
+            PrintLocal($"[悄悄话→{target}] {text}");
+            return true;
         }
 
-        return ok;
+        return Send(XivChatType.TellOutgoing, text, tellTarget: target);
     }
 
     /// <summary>

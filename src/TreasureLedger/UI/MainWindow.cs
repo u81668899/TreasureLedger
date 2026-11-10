@@ -94,6 +94,9 @@ public sealed class MainWindow : Window
                 case TeleportWindow t:
                     t.Draw();
                     break;
+                case AutoExitWindow ae:
+                    ae.Draw();
+                    break;
                 default:
                     ImGui.TextDisabled("（未实现）");
                     break;

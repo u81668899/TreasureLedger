@@ -248,17 +248,7 @@ public sealed class ConfigWindow
 
         ImGui.Spacing();
         ImGui.Separator();
-        ImGui.TextDisabled("悄悄话：默认回给发消息给你的人。留空即可，无需设置。");
-
-        if (config.TellTargets.Count > 0)
-        {
-            ImGui.TextDisabled("当前固定名单：" + string.Join("、", config.TellTargets));
-            if (ImGui.SmallButton("清空固定名单"))
-            {
-                config.TellTargets.Clear();
-                saveConfig();
-            }
-        }
+        ImGui.TextDisabled("悄悄话：只回给发消息的人，自己发的消息会被忽略。");
     }
 
     /// <summary>
