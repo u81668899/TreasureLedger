@@ -91,6 +91,9 @@ public sealed class MainWindow : Window
                 case MobWindow m:
                     m.Draw();
                     break;
+                case TeleportWindow t:
+                    t.Draw();
+                    break;
                 default:
                     ImGui.TextDisabled("（未实现）");
                     break;

@@ -14,6 +14,7 @@ using TreasureLedger.Marks;
 using TreasureLedger.Mobs;
 using TreasureLedger.Recruit;
 using TreasureLedger.Storage;
+using TreasureLedger.Teleport;
 using TreasureLedger.UI;
 
 namespace TreasureLedger;
@@ -33,6 +34,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly IFramework framework;
     private readonly IObjectTable objectTable;
     private readonly IAddonLifecycle addonLifecycle;
+    private readonly IPartyList partyList;
+    private readonly IGameGui gameGui;
 
     private readonly Configuration config;
     private readonly SessionLedger ledger = new();
@@ -55,6 +58,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     private readonly AddonDumper addonDumper;
     private readonly MobTracker mobTracker;
     private readonly MarkerService markerService;
+    private readonly TeleportConfirm teleportConfirm;
+    private readonly TreasurePartyDetector treasureParty;
 
     private readonly WindowSystem windowSystem = new("TreasureLedger");
     private readonly ConfigWindow configWindow;
@@ -78,7 +83,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         IPartyFinderGui partyFinder,
         IFramework framework,
         IObjectTable objectTable,
-        IAddonLifecycle addonLifecycle)
+        IAddonLifecycle addonLifecycle,
+        IPartyList partyList,
+        IGameGui gameGui)
     {
         this.pluginInterface = pluginInterface;
         this.chat = chat;
@@ -91,6 +98,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         this.framework = framework;
         this.objectTable = objectTable;
         this.addonLifecycle = addonLifecycle;
+        this.partyList = partyList;
+        this.gameGui = gameGui;
 
         config = Configuration.Load(pluginInterface);
         catalog = new ItemCatalog(data);
@@ -107,9 +116,14 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         mobTracker = new MobTracker(log, objectTable);
         mobTracker.MobAppeared += OnMobAppeared;
         markerService = new MarkerService(log);
+
+        treasureParty = new TreasurePartyDetector(partyList, treasureContext);
+        teleportConfirm = new TeleportConfirm(log, addonLifecycle, gameGui);
+        teleportConfirm.Confirmed += OnTeleportConfirmed;
         dutyExiter = new DutyExiter(log, sigScanner);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
+        tracker.VaultEntered += dg => treasureParty.MarkVaultEntry();
 
         capture = new LootCapture(chat, log, catalog);
         capture.LootReceived += OnLoot;
@@ -139,6 +153,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         mainWindow.Add("配置", configWindow);
         mainWindow.Add("自动投掷", autoRollWindow);
         mainWindow.Add("小怪与标记", new MobWindow(config, mobTracker, markerService, SaveConfig));
+        mainWindow.Add("传送", new TeleportWindow(config, teleportConfirm, treasureParty, SaveConfig));
         mainWindow.Add("调试", new DebugWindow(addonDumper, commandExecutor, dutyExiter));
         mainWindow.Add("长期统计", historyWindow);
 
@@ -176,6 +191,8 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         framework.Update -= OnFrameworkUpdate;
         mobTracker.MobAppeared -= OnMobAppeared;
+        teleportConfirm.Confirmed -= OnTeleportConfirmed;
+        teleportConfirm.Dispose();
         mobTracker.Dispose();
 
         capture.LootReceived -= OnLoot;
@@ -332,6 +349,30 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         }
     }
 
+    /// <summary>同步传送确认的启用状态。</summary>
+    private void TickTeleport()
+    {
+        var cfg = config.Teleport;
+
+        var armed = cfg.EnableAutoConfirm;
+        if (armed && cfg.OnlyInTreasureParty)
+            armed = treasureParty.IsTreasureParty(cfg.TreasurePartyWindowMinutes);
+
+        teleportConfirm.Armed = armed;
+    }
+
+    /// <summary>传送被自动确认后提醒。</summary>
+    private void OnTeleportConfirmed(string prompt)
+    {
+        if (!config.Teleport.EnableNotify) return;
+
+        try
+        {
+            sender.SendTo(ReportChannel.Echo, config, "已自动确认传送：" + prompt);
+        }
+        catch { }
+    }
+
     private void OnGil(long amount)
     {
         ledger.Gil += amount;
@@ -348,6 +389,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
             // 进神殿自动放标点（每趟只放一次）
             TickShrineWaymarks();
+
+            // 传送自动确认的启用状态
+            TickTeleport();
 
             var cfg = config.AutoRoll;
             if (!cfg.Enabled) return;

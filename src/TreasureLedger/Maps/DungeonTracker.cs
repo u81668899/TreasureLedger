@@ -32,6 +32,9 @@ public sealed class DungeonTracker : IDisposable
     /// <summary>一趟宝库行程结束（离开本时触发）。</summary>
     public event Action? RunEnded;
 
+    /// <summary>进入了一个宝库副本。</summary>
+    public event Action<TreasureDungeon>? VaultEntered;
+
     public DungeonTracker(
         IClientState clientState,
         IPluginLog log,
@@ -71,6 +74,8 @@ public sealed class DungeonTracker : IDisposable
                 // 地图数只在「陷阱魔物全清」时 +1。
                 log.Information("[TreasureLedger] 进入 {Name} (TT={TT})　洞数={Vault}",
                     CurrentDungeon.Name, territory, ledger.VaultCount);
+
+                VaultEntered?.Invoke(CurrentDungeon);
             }
         }
         else if (prev is not null)

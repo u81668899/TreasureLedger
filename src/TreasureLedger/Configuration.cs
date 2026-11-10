@@ -102,6 +102,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>标记与标点配置。</summary>
     public Marks.MarkConfig Marks { get; set; } = new();
 
+    /// <summary>传送提醒与自动确认配置。</summary>
+    public Teleport.TeleportConfig Teleport { get; set; } = new();
+
     public bool IsItemEnabled(uint itemId) => !DisabledItemIds.Contains(itemId);
 
     public void ToggleItem(uint itemId)
