@@ -117,13 +117,13 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         mobTracker.MobAppeared += OnMobAppeared;
         markerService = new MarkerService(log);
 
-        treasureParty = new TreasurePartyDetector(partyList, treasureContext);
+        treasureParty = new TreasurePartyDetector(log, partyList);
         teleportConfirm = new TeleportConfirm(log, addonLifecycle, gameGui);
         teleportConfirm.Confirmed += OnTeleportConfirmed;
+        recruit.JoinedRecruit += (title, desc) => treasureParty.OnJoinedRecruit(title, desc);
         dutyExiter = new DutyExiter(log, sigScanner);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
-        tracker.VaultEntered += dg => treasureParty.MarkVaultEntry();
 
         capture = new LootCapture(chat, log, catalog);
         capture.LootReceived += OnLoot;

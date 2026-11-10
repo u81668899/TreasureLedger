@@ -37,6 +37,9 @@ public sealed class RecruitTracker : IDisposable
 
     public event Action? Changed;
 
+    /// <summary>通过招募加入队伍时触发：（标题, 简介）。</summary>
+    public event Action<string, string>? JoinedRecruit;
+
     /// <summary>「招募内容：xxx」这类直接设置。</summary>
     private static readonly Regex RecruitTextRegex = new(
         @"招募(内容|)(：|:| |)(?<text>.*)", RegexOptions.Compiled);
@@ -120,6 +123,11 @@ public sealed class RecruitTracker : IDisposable
             }
 
             log.Information("[TreasureLedger] 检测进队，招募名={Title}", title);
+
+            // 抛给队伍判定器
+            var desc = Current.Length > 0 ? Current : pendingBoardText;
+            JoinedRecruit?.Invoke(title, desc);
+
             return true;
         }
 

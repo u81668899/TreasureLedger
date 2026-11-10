@@ -43,6 +43,23 @@ public sealed class TeleportWindow
         var isTreasure = party.IsTreasureParty(config.Teleport.TreasurePartyWindowMinutes);
 
         ImGui.Text($"小队：{(inParty ? $"在队伍中（{party.PartySize} 人）" : "单人")}");
+
+        if (party.JoinedTitle.Length > 0)
+        {
+            ImGui.Text($"加入方式：招募「{party.JoinedTitle}」");
+            if (party.JoinedDescription.Length > 0)
+                ImGui.TextWrapped($"招募简介：{party.JoinedDescription}");
+
+            if (party.IsTreasureRecruit)
+                ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), $"寻宝招募判定：是（{party.VerdictReason}）");
+            else
+                ImGui.TextColored(new Vector4(0.9f, 0.6f, 0.3f, 1f), $"寻宝招募判定：否（{party.VerdictReason}）");
+        }
+        else
+        {
+            ImGui.TextDisabled("尚未通过招募加入队伍");
+        }
+
         ImGui.Text($"挖宝队伍判定：{(isTreasure ? "是" : "否")}");
 
         if (confirm.Armed)
@@ -92,7 +109,7 @@ public sealed class TeleportWindow
             saveConfig();
         }
         ImGui.SameLine();
-        ImGui.TextDisabled("（防止误确认其他邀请）");
+        ImGui.TextDisabled("（需通过招募加入，且招募被判定为寻宝）");
 
         var window = cfg.TreasurePartyWindowMinutes;
         ImGui.SetNextItemWidth(140);
