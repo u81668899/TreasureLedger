@@ -40,27 +40,33 @@ public sealed class TeleportWindow
         ImGui.Spacing();
 
         var inParty = party.InParty;
-        var isTreasure = party.IsTreasureParty(config.Teleport.TreasurePartyWindowMinutes);
+        var isTreasure = party.IsTreasureParty(config.Teleport.TreasureEvidenceMinutes);
 
         ImGui.Text($"小队：{(inParty ? $"在队伍中（{party.PartySize} 人）" : "单人")}");
 
-        if (party.JoinedTitle.Length > 0)
+        // 招募信息（软证据）
+        if (party.JoinedTitle.Length > 0 || party.JoinedDescription.Length > 0)
         {
-            ImGui.Text($"加入方式：招募「{party.JoinedTitle}」");
+            if (party.JoinedTitle.Length > 0)
+                ImGui.Text($"招募标题：{party.JoinedTitle}");
             if (party.JoinedDescription.Length > 0)
                 ImGui.TextWrapped($"招募简介：{party.JoinedDescription}");
 
-            if (party.IsTreasureRecruit)
-                ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), $"寻宝招募判定：是（{party.VerdictReason}）");
-            else
-                ImGui.TextColored(new Vector4(0.9f, 0.6f, 0.3f, 1f), $"寻宝招募判定：否（{party.VerdictReason}）");
-        }
-        else
-        {
-            ImGui.TextDisabled("尚未通过招募加入队伍");
+            if (party.HasRecruitHint)
+                ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.9f, 1f), $"招募提示：{party.RecruitHintReason}");
         }
 
-        ImGui.Text($"挖宝队伍判定：{(isTreasure ? "是" : "否")}");
+        // 硬证据
+        if (party.LastHardEvidence != DateTime.MinValue)
+        {
+            var ago = (int)(DateTime.Now - party.LastHardEvidence).TotalMinutes;
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f),
+                $"挖宝证据：{party.LastEvidence}（{ago} 分钟前）");
+            ImGui.TextDisabled($"累计 {party.HardEvidenceCount} 次");
+        }
+
+        ImGui.Text($"挖宝小队判定：{(isTreasure ? "是" : "否")}");
+        ImGui.TextDisabled(party.VerdictText(config.Teleport.TreasureEvidenceMinutes));
 
         if (confirm.Armed)
             ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), "自动确认：已启用");
@@ -111,15 +117,15 @@ public sealed class TeleportWindow
         ImGui.SameLine();
         ImGui.TextDisabled("（需通过招募加入，且招募被判定为寻宝）");
 
-        var window = cfg.TreasurePartyWindowMinutes;
+        var window = cfg.TreasureEvidenceMinutes;
         ImGui.SetNextItemWidth(140);
-        if (ImGui.SliderInt("判定窗口(分)##t4", ref window, 30, 480))
+        if (ImGui.SliderInt("证据有效期(分)##t4", ref window, 30, 480))
         {
-            cfg.TreasurePartyWindowMinutes = window;
+            cfg.TreasureEvidenceMinutes = window;
             saveConfig();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("进过宝库后，这段时间内视为仍在挖宝队伍");
+            ImGui.SetTooltip("打过挖宝怪、进过宝库之后，这段时间内仍算挖宝小队");
     }
 
     private void DrawTest()

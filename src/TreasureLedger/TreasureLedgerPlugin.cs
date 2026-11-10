@@ -120,10 +120,11 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         treasureParty = new TreasurePartyDetector(log, partyList);
         teleportConfirm = new TeleportConfirm(log, addonLifecycle, gameGui);
         teleportConfirm.Confirmed += OnTeleportConfirmed;
-        recruit.JoinedRecruit += (title, desc) => treasureParty.OnJoinedRecruit(title, desc);
+        recruit.JoinedRecruit += (title, desc) => treasureParty.OnRecruitInfo(title, desc);
         dutyExiter = new DutyExiter(log, sigScanner);
         tracker = new DungeonTracker(clientState, log, ledger, config, ResetLedger);
         tracker.RunEnded += OnRunEnded;
+        tracker.VaultEntered += dg => treasureParty.MarkHardEvidence("进入" + dg.Name);
 
         capture = new LootCapture(chat, log, catalog);
         capture.LootReceived += OnLoot;
@@ -324,6 +325,9 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
     {
         try
         {
+            // 挖宝小怪出现 = 硬证据
+            treasureParty.MarkHardEvidence("出现" + def.Name);
+
             if (gameObjectId == 0) return;
 
             switch (def.Category)
@@ -356,7 +360,7 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
 
         var armed = cfg.EnableAutoConfirm;
         if (armed && cfg.OnlyInTreasureParty)
-            armed = treasureParty.IsTreasureParty(cfg.TreasurePartyWindowMinutes);
+            armed = treasureParty.IsTreasureParty(cfg.TreasureEvidenceMinutes);
 
         teleportConfirm.Armed = armed;
     }
@@ -428,6 +432,14 @@ public sealed class TreasureLedgerPlugin : IDalamudPlugin
         // 野外挖宝活动标记（打宝图怪、开宝图箱等）
         if (treasureContext.TryMarkFromLog(text))
             log.Debug("[TreasureLedger] 野外挖宝活动已标记");
+
+        // 硬证据：陷阱魔物全清、传送魔纹出现
+        if (id == Loot.LogIds.TrapMobsCleared)
+            treasureParty.MarkHardEvidence("陷阱魔物全清");
+        else if (id == Loot.LogIds.PortalAppeared)
+            treasureParty.MarkHardEvidence("传送魔纹出现");
+        else if (text.Contains("将陷阱引来的魔物全部打倒了", StringComparison.Ordinal))
+            treasureParty.MarkHardEvidence("陷阱魔物全清");
 
         tracker.OnLog(id, text);
     }

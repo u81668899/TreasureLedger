@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TreasureLedger</AssemblyName>
     <RootNamespace>TreasureLedger</RootNamespace>
-    <Version>0.1.0.118</Version>
+    <Version>0.1.0.122</Version>
     <Authors>u81668899</Authors>
     <Description>挖宝会计：记录宝库掉落、分类统计、频道播报</Description>
     <PackageProjectUrl>https://github.com/u81668899/TreasureLedger</PackageProjectUrl>
